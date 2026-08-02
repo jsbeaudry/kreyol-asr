@@ -69,7 +69,7 @@ def _fetch(inp: dict) -> bytes:
         return r.read()
 
 
-def _to_wav16k(blob: bytes) -> tuple[str, float, float, float]:
+def _to_wav16k(blob: bytes) -> tuple[str, float, float, float, float, float]:
     """Decode whatever was sent to 16 kHz mono PCM16 on disk."""
     try:
         data, sr = sf.read(io.BytesIO(blob), dtype="float32", always_2d=False)
@@ -83,6 +83,17 @@ def _to_wav16k(blob: bytes) -> tuple[str, float, float, float]:
     if sr != SAMPLE_RATE:
         # Band-limited resampling; naive interpolation aliases into the mel bins.
         arr = soxr.resample(arr, sr, SAMPLE_RATE, quality="HQ").astype(np.float32)
+    # Peak-normalise quiet input. Training audio was clean, well-levelled read
+    # speech peaking near full scale; a laptop mic often lands 20-30 dB below
+    # that, and an RNN-T decoder facing an out-of-distribution level can emit
+    # nothing at all rather than a bad guess. Applied only when there is real
+    # signal, so silence stays silence.
+    gain = 1.0
+    raw_peak = float(np.abs(arr).max())
+    if 1e-4 < raw_peak < 0.5:
+        gain = 0.95 / raw_peak
+        arr = arr * gain
+
     seconds = len(arr) / SAMPLE_RATE
     if seconds < 0.3:
         raise ValueError(f"audio is only {seconds:.2f}s; too short to transcribe")
@@ -90,7 +101,8 @@ def _to_wav16k(blob: bytes) -> tuple[str, float, float, float]:
         raise ValueError(f"audio is {seconds:.1f}s; limit is {MAX_AUDIO_SECONDS:.0f}s")
     tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     sf.write(tmp.name, np.clip(arr, -1.0, 1.0), SAMPLE_RATE, subtype="PCM_16")
-    return tmp.name, seconds, float(np.sqrt((arr ** 2).mean())), float(np.abs(arr).max())
+    return (tmp.name, seconds, float(np.sqrt((arr ** 2).mean())),
+            float(np.abs(arr).max()), round(gain, 2), round(raw_peak, 5))
 
 
 def _manifest(wav: str, seconds: float) -> str:
@@ -126,7 +138,7 @@ def handler(job):
     inp = (job or {}).get("input") or {}
     try:
         right, latency_ms = _right_context(inp)
-        wav, seconds, rms, peak = _to_wav16k(_fetch(inp))
+        wav, seconds, rms, peak, gain, raw_peak = _to_wav16k(_fetch(inp))
     except ValueError as e:
         return {"error": str(e)}
 
@@ -155,13 +167,15 @@ def handler(job):
     result = {"text": text, "lang": LANG, "latency_ms": latency_ms,
               "att_context_size": [LEFT_CONTEXT, right],
               "duration_s": round(seconds, 3), "device": DEVICE,
-              "audio_rms": round(rms, 5), "audio_peak": round(peak, 5)}
+              "audio_rms": round(rms, 5), "audio_peak": round(peak, 5),
+              "input_peak": raw_peak, "gain_applied": gain}
     if not text.strip():
         result["note"] = (
             "no speech decoded — audio is silent or near-silent"
             if rms < 0.005 else
-            "no speech decoded, but the audio has signal; check that it is Creole "
-            "speech and longer than ~0.5 s"
+            f"no speech decoded despite signal (input peak {raw_peak:.3f}, "
+            f"gain x{gain:.1f} applied). Likely too quiet, too noisy, or not "
+            f"Creole speech — try speaking closer to the mic."
         )
     return result
 

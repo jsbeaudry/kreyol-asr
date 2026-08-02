@@ -130,3 +130,11 @@ def test_empty_result_explains_itself():
 
 def test_too_short_audio_is_rejected_with_a_reason():
     assert "too short to transcribe" in HANDLER
+
+
+def test_quiet_audio_is_gain_normalised():
+    """Training audio peaked near full scale; mic input often sits 20-30 dB lower,
+    and an out-of-distribution level makes the RNN-T emit nothing at all."""
+    assert "gain = 0.95 / raw_peak" in HANDLER
+    assert "1e-4 < raw_peak < 0.5" in HANDLER, "must not amplify silence"
+    assert "gain_applied" in HANDLER
