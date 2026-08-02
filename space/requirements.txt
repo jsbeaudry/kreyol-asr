@@ -1,12 +1,7 @@
-Cython
-packaging
-nemo_toolkit[asr] @ git+https://github.com/NVIDIA/NeMo.git@main
-# NeMo's RNNT kernels predate numba 0.62's CUDA split; 0.66 breaks decoding with
-# "Signature mismatch: 2 argument types given, but function takes 1".
-numba==0.61.2
-transformers>=5.13.0
+# Thin client: the model runs on a RunPod Serverless worker, not here.
+# No torch, no NeMo, no numba pin — the Space needs none of it.
+gradio>=5.0
+requests
 soundfile
 soxr
-librosa
-spaces
-gradio>=5.0
+numpy

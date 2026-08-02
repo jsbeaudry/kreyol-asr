@@ -69,7 +69,7 @@ def _fetch(inp: dict) -> bytes:
         return r.read()
 
 
-def _to_wav16k(blob: bytes) -> tuple[str, float]:
+def _to_wav16k(blob: bytes) -> tuple[str, float, float, float]:
     """Decode whatever was sent to 16 kHz mono PCM16 on disk."""
     try:
         data, sr = sf.read(io.BytesIO(blob), dtype="float32", always_2d=False)
@@ -84,11 +84,13 @@ def _to_wav16k(blob: bytes) -> tuple[str, float]:
         # Band-limited resampling; naive interpolation aliases into the mel bins.
         arr = soxr.resample(arr, sr, SAMPLE_RATE, quality="HQ").astype(np.float32)
     seconds = len(arr) / SAMPLE_RATE
+    if seconds < 0.3:
+        raise ValueError(f"audio is only {seconds:.2f}s; too short to transcribe")
     if seconds > MAX_AUDIO_SECONDS:
         raise ValueError(f"audio is {seconds:.1f}s; limit is {MAX_AUDIO_SECONDS:.0f}s")
     tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     sf.write(tmp.name, np.clip(arr, -1.0, 1.0), SAMPLE_RATE, subtype="PCM_16")
-    return tmp.name, seconds
+    return tmp.name, seconds, float(np.sqrt((arr ** 2).mean())), float(np.abs(arr).max())
 
 
 def _manifest(wav: str, seconds: float) -> str:
@@ -124,7 +126,7 @@ def handler(job):
     inp = (job or {}).get("input") or {}
     try:
         right, latency_ms = _right_context(inp)
-        wav, seconds = _to_wav16k(_fetch(inp))
+        wav, seconds, rms, peak = _to_wav16k(_fetch(inp))
     except ValueError as e:
         return {"error": str(e)}
 
@@ -140,10 +142,28 @@ def handler(job):
         except OSError:
             pass
 
-    text = (getattr(out[0], "text", None) or str(out[0])) if out else ""
-    return {"text": text, "lang": LANG, "latency_ms": latency_ms,
-            "att_context_size": [LEFT_CONTEXT, right],
-            "duration_s": round(seconds, 3), "device": DEVICE}
+    # `Hypothesis.text` is "" when nothing was decoded, and "" is falsy — an
+    # `or str(hyp)` fallback here dumps the whole Hypothesis repr into the
+    # response and hides the real problem, which is that no tokens came out.
+    text = ""
+    if out:
+        first = out[0]
+        text = first if isinstance(first, str) else getattr(first, "text", "")
+        if text is None:
+            text = ""
+
+    result = {"text": text, "lang": LANG, "latency_ms": latency_ms,
+              "att_context_size": [LEFT_CONTEXT, right],
+              "duration_s": round(seconds, 3), "device": DEVICE,
+              "audio_rms": round(rms, 5), "audio_peak": round(peak, 5)}
+    if not text.strip():
+        result["note"] = (
+            "no speech decoded — audio is silent or near-silent"
+            if rms < 0.005 else
+            "no speech decoded, but the audio has signal; check that it is Creole "
+            "speech and longer than ~0.5 s"
+        )
+    return result
 
 
 runpod.serverless.start({"handler": handler})

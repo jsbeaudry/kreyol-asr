@@ -107,3 +107,26 @@ def test_audio_length_is_bounded():
     """Unbounded input against a per-second-billed GPU is a cost incident."""
     assert "MAX_AUDIO_SECONDS" in HANDLER
     assert "limit is" in HANDLER
+
+
+def test_empty_transcription_is_not_masked_by_a_falsy_or():
+    """`Hypothesis.text` is "" when nothing decodes, and "" is falsy.
+
+    `getattr(hyp, "text", None) or str(hyp)` therefore returns the entire
+    Hypothesis repr — tensors and all — instead of an empty result, hiding the
+    actual problem (silent or truncated audio) behind a wall of object dump.
+    """
+    assert 'or str(out[0])' not in HANDLER
+    assert 'or str(first)' not in HANDLER
+    assert 'getattr(first, "text", "")' in HANDLER
+
+
+def test_empty_result_explains_itself():
+    """An empty transcription should say why, not just come back blank."""
+    assert '"note"' in HANDLER
+    assert "audio_rms" in HANDLER
+    assert "silent or near-silent" in HANDLER
+
+
+def test_too_short_audio_is_rejected_with_a_reason():
+    assert "too short to transcribe" in HANDLER

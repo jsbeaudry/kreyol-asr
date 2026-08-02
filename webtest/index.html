@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kreyòl ASR — live API test</title>
+<style>
+  :root { --bg:#0f1115; --card:#171a21; --line:#272b35; --fg:#e7e9ee; --dim:#9aa3b2;
+          --accent:#4f8cff; --ok:#3ddc97; --err:#ff6b6b; }
+  * { box-sizing:border-box }
+  body { margin:0; padding:2rem 1rem; background:var(--bg); color:var(--fg);
+         font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif }
+  main { max-width:760px; margin:0 auto }
+  h1 { font-size:1.4rem; margin:0 0 .25rem }
+  .sub { color:var(--dim); margin:0 0 1.5rem }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px;
+          padding:1.1rem; margin-bottom:1rem }
+  label { display:block; font-size:.82rem; color:var(--dim); margin-bottom:.35rem }
+  input, select, button, textarea { font:inherit; border-radius:8px; border:1px solid var(--line) }
+  input, select, textarea { width:100%; padding:.6rem .7rem; background:#0d0f14; color:var(--fg) }
+  textarea { min-height:110px; resize:vertical }
+  button { padding:.65rem 1.1rem; background:var(--accent); color:#fff; border:0;
+           cursor:pointer; font-weight:600 }
+  button:disabled { opacity:.5; cursor:not-allowed }
+  button.ghost { background:#222736; color:var(--fg) }
+  button.rec { background:var(--err) }
+  .row { display:flex; gap:.7rem; flex-wrap:wrap; align-items:end }
+  .row > * { flex:1; min-width:150px }
+  .row > .fixed { flex:0 0 auto }
+  .warn { border-left:3px solid #d0a215; background:#1d1a10; padding:.7rem .9rem;
+          border-radius:0 8px 8px 0; color:#e3cf94; font-size:.86rem; margin-bottom:1rem }
+  .status { font-size:.86rem; color:var(--dim); min-height:1.3em; margin-top:.6rem }
+  .ok { color:var(--ok) } .bad { color:var(--err) }
+  .metrics { display:flex; gap:1.4rem; flex-wrap:wrap; font-size:.82rem; color:var(--dim);
+             margin-top:.7rem }
+  .metrics b { color:var(--fg); font-weight:600 }
+  code { background:#0d0f14; padding:.1rem .35rem; border-radius:4px; font-size:.85em }
+</style>
+</head>
+<body>
+<main>
+  <h1>Kreyòl ASR — live API test</h1>
+  <p class="sub">Records from your mic, converts to 16 kHz WAV in-browser, and calls your
+     RunPod endpoint.</p>
+
+  <div class="warn">
+    Your RunPod API key stays in this browser's <code>localStorage</code> and is sent only to
+    <code>api.runpod.ai</code>. It grants full access to your RunPod account — don't use this
+    page on a shared machine, and use <b>Forget key</b> when you're done.
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <div>
+        <label for="key">RunPod API key</label>
+        <input id="key" type="password" placeholder="rpa_…" autocomplete="off">
+      </div>
+      <div>
+        <label for="ep">Endpoint ID</label>
+        <input id="ep" type="text" value="9fds364d4gicy0">
+      </div>
+      <div class="fixed"><button class="ghost" id="forget">Forget key</button></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="row">
+      <div class="fixed"><button id="rec">● Record</button></div>
+      <div class="fixed"><button class="ghost" id="pick">Upload file</button></div>
+      <input id="file" type="file" accept="audio/*" hidden>
+      <div>
+        <label for="lat">Streaming latency</label>
+        <select id="lat">
+          <option value="80">80 ms — 17.3% WER</option>
+          <option value="320" selected>320 ms — 15.7% WER</option>
+          <option value="560">560 ms — 14.9% WER</option>
+          <option value="1120">1120 ms — 14.7% WER</option>
+        </select>
+      </div>
+    </div>
+    <audio id="play" controls style="width:100%;margin-top:.9rem;display:none"></audio>
+    <div class="row" style="margin-top:.9rem">
+      <div class="fixed"><button id="send" disabled>Transcribe</button></div>
+    </div>
+    <div class="status" id="status"></div>
+  </div>
+
+  <div class="card">
+    <label for="out">Transcription</label>
+    <textarea id="out" readonly placeholder="Result appears here…"></textarea>
+    <div class="metrics" id="metrics"></div>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const status = (msg, cls='') => { $('status').className = 'status ' + cls; $('status').textContent = msg; };
+
+// ---- API key persistence (local only) ------------------------------------
+$('key').value = localStorage.getItem('rp_key') || '';
+$('ep').value  = localStorage.getItem('rp_ep')  || $('ep').value;
+$('key').addEventListener('change', e => localStorage.setItem('rp_key', e.target.value.trim()));
+$('ep').addEventListener('change',  e => localStorage.setItem('rp_ep',  e.target.value.trim()));
+$('forget').onclick = () => { localStorage.removeItem('rp_key'); $('key').value=''; status('Key cleared.'); };
+
+// ---- recording -----------------------------------------------------------
+let recorder, chunks = [], blob = null;
+
+$('rec').onclick = async () => {
+  if (recorder && recorder.state === 'recording') { recorder.stop(); return; }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    chunks = [];
+    recorder = new MediaRecorder(stream);
+    recorder.ondataavailable = e => chunks.push(e.data);
+    recorder.onstop = () => {
+      stream.getTracks().forEach(t => t.stop());
+      blob = new Blob(chunks, { type: recorder.mimeType });
+      $('play').src = URL.createObjectURL(blob);
+      $('play').style.display = 'block';
+      $('rec').textContent = '● Record';
+      $('rec').classList.remove('rec');
+      $('send').disabled = false;
+      status(`Recorded ${(blob.size/1024).toFixed(0)} KB — ready.`);
+    };
+    recorder.start();
+    $('rec').textContent = '■ Stop';
+    $('rec').classList.add('rec');
+    status('Recording…');
+  } catch (e) { status('Microphone denied: ' + e.message, 'bad'); }
+};
+
+$('pick').onclick = () => $('file').click();
+$('file').onchange = e => {
+  blob = e.target.files[0];
+  if (!blob) return;
+  $('play').src = URL.createObjectURL(blob);
+  $('play').style.display = 'block';
+  $('send').disabled = false;
+  status(`${blob.name} — ${(blob.size/1024).toFixed(0)} KB ready.`);
+};
+
+// ---- webm/opus -> 16 kHz mono WAV ----------------------------------------
+// The worker decodes with libsndfile, which cannot read webm/opus. MediaRecorder
+// only produces those, so the conversion has to happen here.
+async function toWav16k(inputBlob) {
+  const buf = await inputBlob.arrayBuffer();
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const decoded = await ctx.decodeAudioData(buf);
+  ctx.close();
+
+  // mixdown to mono
+  const n = decoded.length, chs = decoded.numberOfChannels;
+  const mono = new Float32Array(n);
+  for (let c = 0; c < chs; c++) {
+    const d = decoded.getChannelData(c);
+    for (let i = 0; i < n; i++) mono[i] += d[i] / chs;
+  }
+
+  // resample to 16 kHz via OfflineAudioContext (browser does band-limited SRC)
+  const target = 16000;
+  const outLen = Math.ceil(n * target / decoded.sampleRate);
+  const off = new OfflineAudioContext(1, outLen, target);
+  const srcBuf = off.createBuffer(1, n, decoded.sampleRate);
+  srcBuf.copyToChannel(mono, 0);
+  const src = off.createBufferSource();
+  src.buffer = srcBuf; src.connect(off.destination); src.start();
+  const rendered = await off.startRendering();
+  const pcm = rendered.getChannelData(0);
+
+  // encode WAV PCM16
+  const bytes = new ArrayBuffer(44 + pcm.length * 2);
+  const v = new DataView(bytes);
+  const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  str(0, 'RIFF'); v.setUint32(4, 36 + pcm.length * 2, true); str(8, 'WAVE');
+  str(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true);
+  v.setUint16(22, 1, true); v.setUint32(24, target, true);
+  v.setUint32(28, target * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
+  str(36, 'data'); v.setUint32(40, pcm.length * 2, true);
+  let o = 44;
+  for (let i = 0; i < pcm.length; i++, o += 2) {
+    const s = Math.max(-1, Math.min(1, pcm[i]));
+    v.setInt16(o, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+  }
+  return { blob: new Blob([bytes], { type: 'audio/wav' }), seconds: pcm.length / target };
+}
+
+const toBase64 = b => new Promise((res, rej) => {
+  const r = new FileReader();
+  r.onload = () => res(r.result.split(',')[1]);
+  r.onerror = rej;
+  r.readAsDataURL(b);
+});
+
+// ---- call the endpoint ---------------------------------------------------
+$('send').onclick = async () => {
+  const key = $('key').value.trim(), ep = $('ep').value.trim();
+  if (!key) return status('Enter your RunPod API key.', 'bad');
+  if (!blob) return status('Record or upload something first.', 'bad');
+
+  $('send').disabled = true; $('out').value = ''; $('metrics').textContent = '';
+  const t0 = performance.now();
+  try {
+    status('Converting to 16 kHz WAV…');
+    const { blob: wav, seconds } = await toWav16k(blob);
+    const b64 = await toBase64(wav);
+
+    status('Submitting…');
+    const submit = await fetch(`https://api.runpod.ai/v2/${ep}/run`, {
+      method: 'POST',
+      headers: { 'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ input: { audio_base64: b64, latency_ms: +$('lat').value } })
+    });
+    if (!submit.ok) throw new Error(`submit failed: HTTP ${submit.status}`);
+    const { id } = await submit.json();
+    if (!id) throw new Error('no job id returned');
+
+    // Poll rather than runsync: a cold worker needs ~120 s to pull and load.
+    for (let i = 0; i < 90; i++) {
+      await new Promise(r => setTimeout(r, 2000));
+      const r = await fetch(`https://api.runpod.ai/v2/${ep}/status/${id}`,
+                            { headers: { 'Authorization': 'Bearer ' + key } });
+      const j = await r.json();
+      if (j.status === 'COMPLETED') {
+        const o = j.output || {};
+        if (o.error) throw new Error(o.error);
+        $('out').value = o.text || '(empty)';
+        const wall = ((performance.now() - t0) / 1000).toFixed(1);
+        $('metrics').innerHTML =
+          `<span>cold start <b>${((j.delayTime||0)/1000).toFixed(1)}s</b></span>` +
+          `<span>inference <b>${((j.executionTime||0)/1000).toFixed(2)}s</b></span>` +
+          `<span>audio <b>${(o.duration_s ?? seconds).toFixed?.(2) ?? seconds.toFixed(2)}s</b></span>` +
+          `<span>latency <b>${o.latency_ms}ms</b></span>` +
+          `<span>total <b>${wall}s</b></span>`;
+        return status('Done.', 'ok');
+      }
+      if (['FAILED','CANCELLED','TIMED_OUT'].includes(j.status))
+        throw new Error(`${j.status}: ${JSON.stringify(j.error || j.output || {}).slice(0,200)}`);
+      status(`${j.status.toLowerCase().replace('_',' ')}… ${i*2}s` +
+             (i > 5 ? ' (cold start takes ~2 min)' : ''));
+    }
+    throw new Error('timed out after 3 minutes');
+  } catch (e) {
+    status(e.message, 'bad');
+  } finally {
+    $('send').disabled = false;
+  }
+};
+</script>
+</body>
+</html>
