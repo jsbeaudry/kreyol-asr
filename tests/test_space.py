@@ -105,3 +105,10 @@ def test_handlers_return_messages_rather_than_raising(fn):
     # WorkerError is caught and turned into a user-facing string in both paths.
     assert "except WorkerError" in src
     assert "raise" not in src.replace("raise WorkerError", "")
+
+
+def test_ssr_is_disabled():
+    """Gradio 5.49's SSR renderer served the Accordion, its Sliders and the
+    Examples dataset in /config but never mounted them in the DOM — the TTS tab
+    rendered with no generation settings at all."""
+    assert "ssr_mode=False" in APP

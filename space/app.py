@@ -289,4 +289,8 @@ with gr.Blocks(title="Haitian Creole speech") as demo:
             )
 
 if __name__ == "__main__":
-    demo.launch()
+    # ssr_mode=False: with Gradio 5.49's SSR renderer the Accordion, its Sliders
+    # and the Examples dataset were served in /config but never mounted in the
+    # DOM, and the node server logged 405s alongside "Too little data for
+    # declared Content-Length". Client-side rendering puts them back.
+    demo.launch(ssr_mode=False)
