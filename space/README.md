@@ -1,16 +1,25 @@
 ---
-title: Haitian Creole streaming ASR
-emoji: 🎙️
+title: Haitian Creole speech (ASR + TTS)
+emoji: 🇭🇹
 colorFrom: blue
 colorTo: red
 sdk: gradio
 sdk_version: 5.49.1
 app_file: app.py
 pinned: false
-short_description: Haitian Creole streaming ASR (Kreyol)
+short_description: Haitian Creole speech-to-text and text-to-speech
 ---
 
-# Haitian Creole streaming ASR
+# Haitian Creole speech
+
+Two tabs, two RunPod Serverless endpoints: **speech to text** and **text to
+speech** for Kreyol. Neither model runs in the Space.
+
+They are separate endpoints because they cannot share a Python environment —
+`kani-tts` pins `nemo-toolkit[tts]==2.4.0`, while the ASR model needs
+`nemo_toolkit[asr]` from git main.
+
+## Speech to text
 
 Thin client over a RunPod Serverless endpoint running
 [`jsbeaudry/nemotron-3.5-asr-streaming-0.6b-ht`](https://huggingface.co/jsbeaudry/nemotron-3.5-asr-streaming-0.6b-ht)
@@ -26,6 +35,17 @@ which has no Creole slot, scores 98.2% on the same clips.
 | 560 ms | `[56, 6]` | 14.9% |
 | 1120 ms | `[56, 13]` | 14.7% |
 
+## Text to speech
+
+[`jsbeaudry/haitian-kani-ht-v3`](https://huggingface.co/jsbeaudry/haitian-kani-ht-v3)
+— a KaniTTS voice model for Kreyol with eight speakers: `nana`, `deniz`, `mako`,
+`mariz`, `klodin`, `jan`, `job`, `leo`. Output is 22050 Hz mono, up to 600
+characters per request.
+
+Level varies between speakers — `jan` came back about 9 dB quieter than `nana` on
+the same length of text. The UI reports the peak so a quiet result is not
+mistaken for a failed one.
+
 ## Setup
 
 Under **Settings -> Variables and secrets**:
@@ -34,6 +54,12 @@ Under **Settings -> Variables and secrets**:
 |---|---|---|
 | `RUNPOD_API_KEY` | secret | your RunPod API key |
 | `RUNPOD_ENDPOINT` | variable | `9fds364d4gicy0` |
+| `RUNPOD_TTS_ENDPOINT` | variable | `90fnsmvwgqfl6y` |
+
+**The key must be scoped to both endpoints.** A RunPod *restricted* key is
+limited to the endpoints picked when it was created, so a key that works in one
+tab can return 403 in the other. The UI names that case explicitly when it
+happens.
 
 No GPU is needed — `cpu-basic` is enough, since inference happens on the worker.
 

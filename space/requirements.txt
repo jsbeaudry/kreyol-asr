@@ -1,6 +1,8 @@
 # Thin client: the model runs on a RunPod Serverless worker, not here.
 # No torch, no NeMo, no numba pin — the Space needs none of it.
-gradio>=5.0
+# Must track sdk_version in README.md. `>=5.0` allowed pip to take
+# gradio 6.x, which dropped Textbox(show_copy_button=...).
+gradio~=5.49
 requests
 soundfile
 soxr
