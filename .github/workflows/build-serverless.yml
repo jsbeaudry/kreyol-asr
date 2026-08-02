@@ -45,8 +45,8 @@ jobs:
           context: ./serverless
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/kreyol-asr-serverless:latest
-            ghcr.io/${{ github.repository_owner }}/kreyol-asr-serverless:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/kreyol-asr-worker:latest
+            ghcr.io/${{ github.repository_owner }}/kreyol-asr-worker:${{ github.sha }}
           # HF_TOKEN is only needed if the model repo is private again. Add it as
           # a repository secret and it flows through; absent, the build still
           # works against the public repo.
@@ -56,6 +56,6 @@ jobs:
 
       - name: Image reference
         run: |
-          echo "ghcr.io/${{ github.repository_owner }}/kreyol-asr-serverless:latest"
+          echo "ghcr.io/${{ github.repository_owner }}/kreyol-asr-worker:latest"
           echo "Note: GHCR packages default to PRIVATE — RunPod needs either a"
           echo "container-registry credential or the package set to public."
