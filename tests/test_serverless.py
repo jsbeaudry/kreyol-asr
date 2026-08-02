@@ -189,3 +189,20 @@ def test_hf_transfer_is_installed_in_both_images():
     assert "hf_transfer" in DOCKER_DIRECTIVES
     if TTS.exists():
         assert "hf_transfer" in TTS_DIRECTIVES
+
+
+@pytest.mark.skipif(not TTS.exists(), reason="serverless-tts/ not present")
+def test_tts_overrides_nemo_transformers_cap():
+    """kani-tts 1.0.1 pins nemo-toolkit[tts]==2.4.0 (transformers<=4.52.0) but its
+    model.py imports TransformersKwargs, added in 4.55.0 — a plain install cannot
+    import kani_tts at all. The model is also model_type lfm2, which needs >=4.54.0."""
+    assert "transformers==4.57.1" in TTS_DIRECTIVES
+    # must be installed after kani-tts or pip's resolution puts the cap back
+    assert TTS_DIRECTIVES.index("kani-tts==1.0.1") < TTS_DIRECTIVES.index("transformers==4.57.1")
+
+
+@pytest.mark.skipif(not TTS.exists(), reason="serverless-tts/ not present")
+def test_tts_image_smoke_tests_the_import_at_build_time():
+    """The broken resolution surfaced only as a silent crash-loop on a live worker.
+    A build-time import makes the same failure fail the build instead."""
+    assert "import kani_tts" in TTS_DIRECTIVES

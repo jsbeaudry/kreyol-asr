@@ -17,7 +17,19 @@ RUN pip install --no-cache-dir "kani-tts==1.0.1" && \
     # back. The ASR image gets it transitively from NeMo-on-main; NeMo 2.4.0
     # does not ship it, so install it explicitly.
     pip install --no-cache-dir hf_transfer && \
-    pip install --no-cache-dir runpod soundfile
+    pip install --no-cache-dir runpod soundfile && \
+    # kani-tts 1.0.1 is internally inconsistent: it pins nemo-toolkit[tts]==2.4.0,
+    # which caps transformers at <=4.52.0, but its own model.py imports
+    # TransformersKwargs, added in 4.55.0 — so a plain install cannot import.
+    # The model needs >=4.54.0 anyway (model_type lfm2, saved under 4.54.0),
+    # despite the stale <=4.52.0 pin in the model repo's requirements.txt.
+    # Install last so it wins over NeMo's conservative cap.
+    pip install --no-cache-dir "transformers==4.57.1"
+
+# Fail the BUILD, not a serverless worker, if that resolution is ever wrong
+# again. The previous break only surfaced as a silent crash-loop in production.
+RUN python -c "import kani_tts; import transformers; \
+print('import ok, transformers', transformers.__version__)"
 
 # Bake the voice model in so a cold worker does not download it per start.
 ARG MODEL_REPO=jsbeaudry/haitian-kani-ht-v3
