@@ -6,11 +6,23 @@ on:
     branches: [main]
     paths:
       - 'serverless/**'
+      - 'serverless-tts/**'
       - '.github/workflows/build-serverless.yml'
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ASR and TTS get separate images: kani-tts pins nemo-toolkit==2.4.0
+          # while the ASR model needs nemo from git main. They cannot share one
+          # Python environment.
+          - context: ./serverless
+            image: kreyol-asr-worker
+          - context: ./serverless-tts
+            image: kreyol-tts-worker
     permissions:
       contents: read
       packages: write
@@ -42,11 +54,11 @@ jobs:
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
-          context: ./serverless
+          context: ${{ matrix.context }}
           push: true
           tags: |
-            ghcr.io/${{ github.repository_owner }}/kreyol-asr-worker:latest
-            ghcr.io/${{ github.repository_owner }}/kreyol-asr-worker:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:latest
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:${{ github.sha }}
           # HF_TOKEN is only needed if the model repo is private again. Add it as
           # a repository secret and it flows through; absent, the build still
           # works against the public repo.
@@ -56,6 +68,6 @@ jobs:
 
       - name: Image reference
         run: |
-          echo "ghcr.io/${{ github.repository_owner }}/kreyol-asr-worker:latest"
+          echo "ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:latest"
           echo "Note: GHCR packages default to PRIVATE — RunPod needs either a"
           echo "container-registry credential or the package set to public."

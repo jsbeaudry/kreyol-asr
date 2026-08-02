@@ -138,3 +138,44 @@ def test_quiet_audio_is_gain_normalised():
     assert "gain = 0.95 / raw_peak" in HANDLER
     assert "1e-4 < raw_peak < 0.5" in HANDLER, "must not amplify silence"
     assert "gain_applied" in HANDLER
+
+
+# --- TTS worker -------------------------------------------------------------
+
+TTS = ROOT / "serverless-tts"
+TTS_DOCKER = (TTS / "Dockerfile").read_text() if TTS.exists() else ""
+# Same as DOCKER_DIRECTIVES: the comments name what the image must NOT contain.
+TTS_DIRECTIVES = "\n".join(
+    l for l in TTS_DOCKER.splitlines() if not l.strip().startswith("#"))
+TTS_HANDLER = (TTS / "handler.py").read_text() if TTS.exists() else ""
+
+
+@pytest.mark.skipif(not TTS.exists(), reason="serverless-tts/ not present")
+def test_tts_is_a_separate_image_from_asr():
+    """kani-tts pins nemo-toolkit[tts]==2.4.0; the ASR model needs nemo from git
+    main. Installed together, pip downgrades NeMo and the ASR model stops loading."""
+    assert "kani-tts==1.0.1" in TTS_DIRECTIVES
+    assert "nemo_toolkit[asr]" not in TTS_DIRECTIVES, "ASR NeMo must not be in the TTS image"
+    assert "kani-tts" not in DOCKER_DIRECTIVES, "TTS must not be in the ASR image"
+
+
+@pytest.mark.skipif(not TTS.exists(), reason="serverless-tts/ not present")
+def test_tts_voice_names_map_to_ids():
+    for name in ("nana", "deniz", "mako", "mariz", "klodin", "jan", "job", "leo"):
+        assert f'"{name}"' in TTS_HANDLER
+    assert '"2ed43a0fa899"' in TTS_HANDLER
+
+
+@pytest.mark.skipif(not TTS.exists(), reason="serverless-tts/ not present")
+def test_tts_bakes_the_model_and_bounds_input():
+    assert "snapshot_download" in TTS_DIRECTIVES
+    assert "MAX_CHARS" in TTS_HANDLER
+
+
+@pytest.mark.skipif(not TTS.exists(), reason="serverless-tts/ not present")
+def test_tts_handler_returns_errors_rather_than_raising():
+    fn = next(n for n in ast.parse(TTS_HANDLER).body
+              if isinstance(n, ast.FunctionDef) and n.name == "handler")
+    src = ast.unparse(fn)
+    assert src.count("'error'") + src.count('"error"') >= 3
+    assert "raise" not in src
