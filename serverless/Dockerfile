@@ -18,6 +18,9 @@ RUN pip install --no-cache-dir Cython packaging && \
     # install pulls 0.66 and every decode dies with
     #   TypeError: Signature mismatch: 2 argument types given, but function takes 1
     pip install --no-cache-dir "numba==0.61.2" && \
+    # Explicit, not transitive: the base image sets
+    # HF_HUB_ENABLE_HF_TRANSFER=1 and huggingface_hub hard-errors without it.
+    pip install --no-cache-dir hf_transfer && \
     pip install --no-cache-dir runpod soundfile soxr
 
 # Bake the checkpoint into the image. A cold worker otherwise spends 30-60 s

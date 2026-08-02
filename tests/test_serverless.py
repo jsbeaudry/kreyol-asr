@@ -179,3 +179,13 @@ def test_tts_handler_returns_errors_rather_than_raising():
     src = ast.unparse(fn)
     assert src.count("'error'") + src.count('"error"') >= 3
     assert "raise" not in src
+
+
+def test_hf_transfer_is_installed_in_both_images():
+    """runpod/pytorch sets HF_HUB_ENABLE_HF_TRANSFER=1, and huggingface_hub raises
+    rather than falling back when the package is absent. The ASR image happened to
+    get it via NeMo-on-main; the TTS image did not, and its build died at
+    snapshot_download."""
+    assert "hf_transfer" in DOCKER_DIRECTIVES
+    if TTS.exists():
+        assert "hf_transfer" in TTS_DIRECTIVES

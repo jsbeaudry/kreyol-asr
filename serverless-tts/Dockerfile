@@ -12,6 +12,11 @@ ENV PYTHONUNBUFFERED=1 \
 
 # kani-tts requires torch>=2.8.0, which the base image already satisfies.
 RUN pip install --no-cache-dir "kani-tts==1.0.1" && \
+    # The runpod/pytorch base sets HF_HUB_ENABLE_HF_TRANSFER=1, and
+    # huggingface_hub hard-errors if the package is missing rather than falling
+    # back. The ASR image gets it transitively from NeMo-on-main; NeMo 2.4.0
+    # does not ship it, so install it explicitly.
+    pip install --no-cache-dir hf_transfer && \
     pip install --no-cache-dir runpod soundfile
 
 # Bake the voice model in so a cold worker does not download it per start.
