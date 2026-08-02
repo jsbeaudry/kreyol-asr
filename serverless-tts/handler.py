@@ -93,13 +93,20 @@ def handler(job):
         except OSError:
             pass
 
+    # The model echoes back the whole prompt, speaker id and all. Returning that
+    # verbatim leaks the id the `voice` names exist to hide.
+    spoken = spoken if isinstance(spoken, str) else text
+    prefix = f"{speaker_id}:"
+    if spoken.startswith(prefix):
+        spoken = spoken[len(prefix):]
+
     return {
         "audio_base64": base64.b64encode(blob).decode(),
         "sample_rate": info.samplerate,
         "duration_s": round(info.duration, 3),
         "voice": voice,
         "voice_id": speaker_id,
-        "text": spoken if isinstance(spoken, str) else text,
+        "text": spoken,
         "device": "cuda" if torch.cuda.is_available() else "cpu",
     }
 
