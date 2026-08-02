@@ -18,6 +18,7 @@ Requires, under Settings -> Variables and secrets:
 import base64
 import io
 import os
+import re
 import time
 
 import gradio as gr
@@ -43,7 +44,13 @@ LATENCIES = {
 }
 
 VOICES = ["nana", "deniz", "mako", "mariz", "klodin", "jan", "job", "leo"]
-MAX_CHARS = 120  # mirrors the worker's own limit
+MAX_CHARS = 120        # the worker's per-request limit, mirrored here
+MAX_TOTAL_CHARS = 2000  # guard on one submission: every segment is a billed call
+SEGMENT_GAP_S = 0.15    # silence joined between segments, so sentences breathe
+
+# Sentence enders, keeping the punctuation with the sentence it closes.
+_SENTENCE_END = re.compile(r"(?<=[.!?\u2026])\s+")
+_CLAUSE_END = re.compile(r"(?<=[,;:])\s+")
 
 # A cold worker pulls >10 GB and imports NeMo before it can serve anything.
 POLL_SECONDS = 2
@@ -54,7 +61,7 @@ class WorkerError(RuntimeError):
     """A message already fit to show the user."""
 
 
-def _run_and_poll(base, payload, started, progress):
+def _run_and_poll(base, payload, started, progress, label=""):
     """Submit to /run and poll /status. Both workers can cold-start for minutes,
     which a synchronous /runsync call will not sit through."""
     if not API_KEY:
@@ -90,8 +97,8 @@ def _run_and_poll(base, payload, started, progress):
                 raise WorkerError(f"{state}: {str(s.get('error') or s.get('output'))[:300]}")
             waited = int(time.time() - started)
             progress(min(waited / MAX_WAIT_SECONDS, 0.95),
-                     desc=f"{state.lower().replace('_', ' ')} — {waited}s"
-                          + (" (cold start takes ~2 min)" if waited > 15 else ""))
+                     desc=(f"{label}{state.lower().replace('_', ' ')} — {waited}s"
+                           + (" (cold start takes ~2 min)" if waited > 15 else "")))
         raise WorkerError(f"Timed out after {MAX_WAIT_SECONDS}s.")
     except requests.RequestException as e:
         raise WorkerError(f"Request failed: {type(e).__name__}: {e}") from e
@@ -159,43 +166,149 @@ def transcribe(audio, latency_label, progress=gr.Progress()):
 
 # --- TTS ---------------------------------------------------------------------
 
+def _hard_wrap(unit: str, limit: int) -> list[str]:
+    """Last resort for a clause with no punctuation left to break on."""
+    out, line = [], ""
+    for word in unit.split(" "):
+        if len(word) > limit:              # one unsplittable token
+            if line:
+                out.append(line)
+                line = ""
+            out.extend(word[i:i + limit] for i in range(0, len(word), limit))
+        elif not line:
+            line = word
+        elif len(line) + 1 + len(word) <= limit:
+            line = f"{line} {word}"
+        else:
+            out.append(line)
+            line = word
+    if line:
+        out.append(line)
+    return out
+
+
+def _break_down(unit: str, limit: int) -> list[str]:
+    """A single sentence longer than the worker allows, split at clause
+    punctuation first so the cut lands somewhere a speaker would pause."""
+    if len(unit) <= limit:
+        return [unit]
+    out, buf = [], ""
+    for part in _CLAUSE_END.split(unit):
+        if len(part) > limit:
+            if buf:
+                out.append(buf)
+                buf = ""
+            out.extend(_hard_wrap(part, limit))
+        elif not buf:
+            buf = part
+        elif len(buf) + 1 + len(part) <= limit:
+            buf = f"{buf} {part}"
+        else:
+            out.append(buf)
+            buf = part
+    if buf:
+        out.append(buf)
+    return out
+
+
+def _split_for_tts(text: str, limit: int = MAX_CHARS) -> list[str]:
+    """Cut text into pieces that each fit one TTS request.
+
+    Sentence boundaries first, since that is where a natural pause already is.
+    Consecutive sentences are then packed back together up to the limit, because
+    every piece is a separate billed round trip.
+    """
+    text = " ".join((text or "").split())
+    if not text:
+        return []
+    pieces = []
+    for sentence in _SENTENCE_END.split(text):
+        sentence = sentence.strip()
+        if sentence:
+            pieces.extend(_break_down(sentence, limit))
+    packed = []
+    for piece in pieces:
+        if packed and len(packed[-1]) + 1 + len(piece) <= limit:
+            packed[-1] = f"{packed[-1]} {piece}"
+        else:
+            packed.append(piece)
+    return packed
+
+
 def synthesize(text, voice, temperature, top_p, repetition_penalty,
                progress=gr.Progress()):
     text = (text or "").strip()
     if not text:
         return None, "Type some Creole text first."
-    if len(text) > MAX_CHARS:
-        return None, f"That is {len(text)} characters; the worker's limit is {MAX_CHARS}."
+    if len(text) > MAX_TOTAL_CHARS:
+        return None, (f"That is {len(text)} characters; this Space sends at most "
+                      f"{MAX_TOTAL_CHARS} in one go.")
+
+    segments = _split_for_tts(text)
+    if not segments:
+        return None, "Nothing to say."
 
     started = time.time()
-    payload = {"input": {"text": text, "voice": voice,
-                         "temperature": temperature, "top_p": top_p,
-                         "repetition_penalty": repetition_penalty}}
-    try:
-        status_json, out = _run_and_poll(TTS_BASE, payload, started, progress)
-    except WorkerError as e:
-        return None, str(e)
+    chunks, sample_rate, exec_total, cold_total = [], None, 0.0, 0.0
+    used = {}
+    for i, segment in enumerate(segments, 1):
+        payload = {"input": {"text": segment, "voice": voice,
+                             "temperature": temperature, "top_p": top_p,
+                             "repetition_penalty": repetition_penalty}}
+        label = f"segment {i}/{len(segments)} · " if len(segments) > 1 else ""
+        try:
+            status_json, out = _run_and_poll(TTS_BASE, payload, started, progress,
+                                             label=label)
+        except WorkerError as e:
+            done = f" {i - 1} of {len(segments)} segments had already succeeded." \
+                   if i > 1 else ""
+            return None, f"Segment {i} of {len(segments)} failed — {e}{done}"
 
-    b64 = out.get("audio_base64")
-    if not b64:
-        return None, "The worker returned no audio."
-    try:
-        data, sr = sf.read(io.BytesIO(base64.b64decode(b64)), dtype="float32")
-    except Exception as e:  # noqa: BLE001
-        return None, f"Could not decode the returned audio: {type(e).__name__}: {e}"
+        b64 = out.get("audio_base64")
+        if not b64:
+            return None, f"Segment {i} of {len(segments)} came back with no audio."
+        try:
+            data, sr = sf.read(io.BytesIO(base64.b64decode(b64)), dtype="float32")
+        except Exception as e:  # noqa: BLE001
+            return None, (f"Could not decode segment {i} of {len(segments)}: "
+                          f"{type(e).__name__}: {e}")
+        if data.ndim > 1:
+            data = data.mean(axis=1)
+        if sample_rate is None:
+            sample_rate = sr
+        elif sr != sample_rate:
+            # Never seen from this model, but concatenating mismatched rates
+            # would silently change the pitch of part of the clip.
+            return None, (f"Segment {i} came back at {sr} Hz but segment 1 was "
+                          f"{sample_rate} Hz; refusing to join them.")
+        chunks.append(data)
+        exec_total += (status_json.get("executionTime") or 0) / 1000
+        cold_total += (status_json.get("delayTime") or 0) / 1000
+        used = {k: out[k] for k in ("temperature", "top_p", "repetition_penalty")
+                if out.get(k) is not None} or used
+
+    if len(chunks) > 1:
+        gap = np.zeros(int(SEGMENT_GAP_S * sample_rate), dtype=np.float32)
+        joined = [chunks[0]]
+        for c in chunks[1:]:
+            joined.extend((gap, c))
+        audio = np.concatenate(joined)
+    else:
+        audio = chunks[0]
 
     # Voice levels vary a lot between speakers, so show the peak rather than
     # leaving a quiet result looking like a failure.
-    peak = float(np.abs(data).max() or 0.0)
-    knobs = " · ".join(
-        f"{k} {out[k]:g}" for k in ("temperature", "top_p", "repetition_penalty")
-        if out.get(k) is not None)
-    metrics = (f"**{voice}** · {out.get('duration_s', len(data) / sr):.2f}s @ "
-               f"{out.get('sample_rate', sr)} Hz · "
-               + _timing(status_json, started,
-                         f" · `{out.get('device', '?')}` · peak {peak:.3f}")
+    peak = float(np.abs(audio).max() or 0.0)
+    knobs = " · ".join(f"{k} {v:g}" for k, v in used.items())
+    wall = time.time() - started
+    note = " (worker was cold)" if cold_total > 20 else ""
+    seg_note = (f"**{len(segments)} segments** · " if len(segments) > 1 else "")
+    metrics = (f"**{voice}** · {seg_note}{len(audio) / sample_rate:.2f}s @ "
+               f"{sample_rate} Hz · inference **{exec_total:.2f}s** · "
+               f"queue/cold {cold_total:.1f}s{note} · total {wall:.1f}s · "
+               f"peak {peak:.3f}"
                + (f"\n\n<sub>{knobs}</sub>" if knobs else ""))
-    return (sr, data), metrics
+    return (sample_rate, audio), metrics
 
 
 # --- UI ----------------------------------------------------------------------
@@ -245,9 +358,12 @@ with gr.Blocks(title="Haitian Creole speech") as demo:
             )
             with gr.Row():
                 tts_text = gr.Textbox(
-                    label="Creole text", lines=4, max_lines=8,
-                    placeholder="Bonjou, koman ou ye?",
-                    info=f"Up to {MAX_CHARS} characters.")
+                    label="Creole text", lines=6, max_lines=14,
+                    placeholder="Bonjou, koman ou ye? Mwen kontan tande ou jodi a.",
+                    info=f"Up to {MAX_TOTAL_CHARS} characters. Longer text is "
+                         f"split at sentence boundaries into {MAX_CHARS}-character "
+                         f"segments, synthesised one at a time and joined back "
+                         f"into a single clip.")
                 voice = gr.Dropdown(VOICES, value="nana", label="Voice")
             with gr.Accordion("Generation settings", open=False):
                 gr.Markdown(
@@ -285,7 +401,9 @@ with gr.Blocks(title="Haitian Creole speech") as demo:
             gr.Markdown(
                 "_Level varies between speakers — some voices are noticeably "
                 "quieter than others. The peak is reported above so a quiet "
-                "result is not mistaken for a failed one._"
+                "result is not mistaken for a failed one._\n\n"
+                "_Each segment is a separate call to the worker, so a long "
+                "passage takes roughly (segments × ~2 s) once a worker is warm._"
             )
 
 if __name__ == "__main__":

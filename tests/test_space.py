@@ -112,3 +112,65 @@ def test_ssr_is_disabled():
     Examples dataset in /config but never mounted them in the DOM — the TTS tab
     rendered with no generation settings at all."""
     assert "ssr_mode=False" in APP
+
+
+# --- sentence splitting ------------------------------------------------------
+
+def _splitter():
+    """Exec just the splitter out of app.py; importing it would need gradio."""
+    src = ast.parse(APP)
+    wanted = {"_hard_wrap", "_break_down", "_split_for_tts"}
+    fns = [ast.unparse(n) for n in src.body
+           if isinstance(n, ast.FunctionDef) and n.name in wanted]
+    assert len(fns) == 3, "splitter helpers missing from app.py"
+    ns = {"re": __import__("re"), "MAX_CHARS": 120,
+          "_SENTENCE_END": __import__("re").compile(r"(?<=[.!?…])\s+"),
+          "_CLAUSE_END": __import__("re").compile(r"(?<=[,;:])\s+")}
+    exec("\n".join(fns), ns)
+    return ns["_split_for_tts"]
+
+
+def test_split_keeps_every_segment_within_the_worker_limit():
+    split = _splitter()
+    long_text = ("Ayiti se yon peyi ki gen anpil istwa. " * 12
+                 + "Moun yo toujou kontan resevwa vizitè, e chak ane gen anpil "
+                   "aktivite kiltirèl nan tout peyi a, sitou nan mwa dawout.")
+    for seg in split(long_text, 120):
+        assert len(seg) <= 120, f"segment too long ({len(seg)}): {seg!r}"
+
+
+def test_split_loses_no_words():
+    split = _splitter()
+    text = ("Bonjou, koman ou ye? Mwen kontan tande ou jodi a! Ayiti se yon peyi "
+            "ki gen anpil istwa… epi anpil kilti.")
+    assert " ".join(split(text, 120)).split() == text.split()
+
+
+def test_split_breaks_a_single_overlong_sentence():
+    """A sentence with no dot still has to fit — otherwise the worker rejects it
+    and the whole request fails."""
+    split = _splitter()
+    one = "Mwen te ale nan mache a, epi mwen te achte anpil bagay, " * 4
+    segs = split(one, 120)
+    assert len(segs) > 1
+    assert all(len(s) <= 120 for s in segs)
+
+
+def test_split_packs_short_sentences_to_cut_round_trips():
+    """Each segment is a billed call, so consecutive short sentences ride together."""
+    split = _splitter()
+    segs = split("Bonjou. Koman ou ye? Mwen byen.", 120)
+    assert segs == ["Bonjou. Koman ou ye? Mwen byen."]
+
+
+def test_split_handles_empty_and_whitespace():
+    split = _splitter()
+    assert split("", 120) == []
+    assert split("   \n  ", 120) == []
+
+
+def test_split_survives_an_unsplittable_token():
+    split = _splitter()
+    segs = split("a" * 300, 120)
+    assert all(len(s) <= 120 for s in segs)
+    assert "".join(segs) == "a" * 300
