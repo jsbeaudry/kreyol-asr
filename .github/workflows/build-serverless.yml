@@ -1,0 +1,61 @@
+name: Build serverless worker
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'serverless/**'
+      - '.github/workflows/build-serverless.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The image is ~12-15 GB (torch + CUDA + a 2.5 GB baked-in checkpoint) and a
+      # stock runner only has ~14 GB free. Without this the build dies partway
+      # through with "no space left on device".
+      - name: Reclaim runner disk
+        run: |
+          echo "before: $(df -h / | awk 'NR==2{print $4}') free"
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY" \
+                      /usr/local/share/powershell /usr/share/swift || true
+          sudo docker image prune --all --force || true
+          echo "after:  $(df -h / | awk 'NR==2{print $4}') free"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./serverless
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/kreyol-asr-serverless:latest
+            ghcr.io/${{ github.repository_owner }}/kreyol-asr-serverless:${{ github.sha }}
+          # HF_TOKEN is only needed if the model repo is private again. Add it as
+          # a repository secret and it flows through; absent, the build still
+          # works against the public repo.
+          build-args: |
+            HF_TOKEN=${{ secrets.HF_TOKEN }}
+          provenance: false
+
+      - name: Image reference
+        run: |
+          echo "ghcr.io/${{ github.repository_owner }}/kreyol-asr-serverless:latest"
+          echo "Note: GHCR packages default to PRIVATE — RunPod needs either a"
+          echo "container-registry credential or the package set to public."

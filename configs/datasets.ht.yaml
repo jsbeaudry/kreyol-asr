@@ -1,0 +1,102 @@
+# The only file you edit per run: which Hugging Face datasets feed the fine-tune.
+#
+#   kreyol-asr prepare --config configs/datasets.ht.yaml
+#
+# Every source below is private; HF_TOKEN must be set (see .env.example).
+# All 18 expose `text` + `speaker_id`, so column auto-detection handles them —
+# no explicit *_column mapping needed.
+#
+# `synthetic: true` keeps a source out of val/test. TTS audio is fine as training
+# augmentation, but scoring on it measures the model against the narrow acoustic
+# distribution it trained on and reports a WER that will not hold up on real
+# recordings. VERIFY THESE FLAGS: they are inferred from repo names, and each of
+# these repos carries a `nature` column that probably states it outright — worth
+# checking once Hub access is restored.
+
+language: ht-HT
+
+sources:
+  # ---- real recordings -------------------------------------------------
+  - repo_id: jsbeaudry/m1-collect # 3087
+    split: train
+  - repo_id: jsbeaudry/bible-chapters-data # 2808
+    split: train
+  - repo_id: jsbeaudry/media-social-2 # 2306
+    split: train
+  - repo_id: jsbeaudry/franc-haitian # 2282
+    split: train
+  - repo_id: jsbeaudry/franc-haitian-female # 1570
+    split: train
+  - repo_id: jsbeaudry/learn-the-numbers # 1225
+    split: train
+  - repo_id: jsbeaudry/justice-in-creole # 922
+    split: train
+  - repo_id: jsbeaudry/finance-in-creole # 804
+    split: train
+  - repo_id: jsbeaudry/history-data # 592
+    split: train
+  - repo_id: jsbeaudry/ecommerce-creole # 292
+    split: train
+  - repo_id: jsbeaudry/media-social # 227
+    split: train
+  - repo_id: jsbeaudry/new-data-format # 27
+    split: train
+  - repo_id: jsbeaudry/priye-kreyol # 23
+    split: train
+
+  # Public, real, and the only source not produced in-house — good ballast for
+  # the test split.
+  - repo_id: jsbeaudry/cmu_haitian_creole_speech # 399
+    split: train
+
+  # ---- synthesized speech: trains, never evaluates ---------------------
+  - repo_id: jsbeaudry/openai-tts-data # 4743
+    split: train
+    synthetic: true
+  - repo_id: jsbeaudry/creole-text-voice # 4743 — same row count as openai-tts-data,
+    split: train #        so possibly the same corpus re-exported
+    synthetic: true
+  - repo_id: jsbeaudry/ggl-tts-data # 553
+    split: train
+    synthetic: true
+
+  # ---- excluded on purpose --------------------------------------------
+  # finance-in-creole-10001 (804 rows, 0.20 GB) matches finance-in-creole exactly;
+  #   including it would just duplicate those clips.
+  # ecommerce-creole-1000 (10) looks like a truncated copy of ecommerce-creole.
+  # nvidia-nemo-nano-codec-franc-haitian holds Nano Codec tokens, not waveforms.
+  # `prepare` also dedupes on md5(audio)+text, so any overlap that slips through
+  # is dropped and counted under `duplicate` in the report.
+
+split:
+  train: 0.95
+  val: 0.025
+  test: 0.025
+  # Keep the same speaker out of both train and test. Falls back to a
+  # deterministic hash split when no speaker column exists (the report says which).
+  speaker_disjoint: true
+  seed: 1804
+
+filters:
+  min_duration: 0.5
+  # 18s, not 30s: this is a GPU-memory constraint, not a data-quality one.
+  # RNNT loss memory scales with frames x target-tokens x vocab(13088), and
+  # clips above ~18s OOM'd a 46 GB A40 twice. Costs 1.47 h of 47.4 (3%).
+  # On an 80 GB card, raise this back to 30.
+  max_duration: 18.0
+  drop_empty_text: true
+  # Clips whose transcript contains characters outside the Creole charset are kept
+  # but counted in the tokenizer-coverage report. Set true to drop them instead.
+  drop_out_of_charset: false
+
+text:
+  # The base model emits punctuated, properly-cased text. Matching that style
+  # matters — see README "Transcript style".
+  lowercase: false
+  strip_bracketed: true # remove [noise], (inaudible), <unk> style annotations
+  normalize_apostrophes: true # curly -> straight; critical for l'ap / m'ap / k'ap
+  # The Nemotron BPE has no token for : ; ( ) % & / — leaving them in would make
+  # them <unk> training targets. Map/drop them instead. See VOCAB_FALLBACKS in text.py.
+  sanitize_to_vocab: true
+
+output_dir: data/ht

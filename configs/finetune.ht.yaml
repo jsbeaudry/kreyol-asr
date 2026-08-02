@@ -1,0 +1,77 @@
+# Training / eval / publish settings. Every key here maps to a Hydra override
+# passed to NeMo's speech_to_text_finetune.py, or to our own eval + push steps.
+
+base_model: nvidia/nemotron-3.5-asr-streaming-0.6b
+
+language:
+  # Claim a free prompt slot instead of overwriting an existing language.
+  # processor_config.json uses indices 0-104 of num_prompts=128, so 105 is free.
+  tag: ht-HT
+  slot: 105
+  # Warm-start the new slot from fr-FR (index 8): Haitian Creole is French-lexified
+  # Latin script, so the French prompt vector is the best available prior.
+  # Set to null for a randomly-initialized slot.
+  warm_start_from: fr-FR
+
+train:
+  # att_context_size = [left, right] in 80ms frames; right: 0=80ms 3=320ms 6=560ms 13=1120ms.
+  #
+  # LEFT MUST BE 56 — config.json sliding_window=57 => 56 frames of left context.
+  # The stock NeMo YAML ships [70, 6], which does NOT match this checkpoint.
+  #
+  # This is a LIST of contexts, exactly as the released checkpoint was trained
+  # (verified by reading its model_config.yaml). Keeping all four means one model
+  # serves every latency; narrowing it to a single pair specialises the model to
+  # that latency and regresses the other three.
+  att_context_size: [[56, 3], [56, 0], [56, 6], [56, 13]]
+  # Sized from the MEASURED corpus, not a guess: prepare reports 47.427 h in the
+  # train pool, and at batch_duration=400s that is ~427 steps/epoch. So:
+  #     6000 -> 14 epochs   8000 -> 19   10000 -> 23   30000 -> 70
+  # 30000 was a placeholder written before the data existed; 70 epochs over 47 h
+  # would overfit hard. 10000 (~23 epochs) is a reasonable fine-tuning budget —
+  # watch val WER and stop early if it turns up.
+  max_steps: 10000
+  devices: 1
+  precision: bf16
+  # Seconds of audio per batch (Lhotse dynamic batching). 400 is the stock value
+  # and it OOM'd on a 46 GB A40: RNNT loss memory scales with batch x frames x
+  # target-length x vocab, so a batch of long clips with long transcripts spikes
+  # hard. 300 leaves headroom. Steps/epoch = train_hours*3600/batch_duration,
+  # so at 45.9 h this is ~661 steps/epoch (10000 steps ~= 15 epochs).
+  # Dropped 300 -> 250 after a SECOND OOM at step ~1615: even with
+  # fused_batch_size=1 a single long clip's (T x U x V=13088) loss tensor
+  # plus its gradient buffer wanted 4.56 GiB on top of 40.8 GiB in use.
+  batch_duration: 250
+  num_workers: 8
+  lr: 1.0e-4 # real LR: we swap Noam for cosine, unlike the base recipe
+  weight_decay: 1.0e-3
+  # 5% of max_steps. The base recipe's 10000-step warmup assumes training from
+  # scratch; warming up for the whole run would waste a fine-tune.
+  warmup_steps: 500
+  min_lr: 1.0e-6
+  optimizer: adamw
+  scheduler: CosineAnnealing
+  val_check_interval: 500 # ~20 validation points across the run
+  save_top_k: 3
+  exp_dir: exp
+  # Extra `key=value` Hydra overrides appended verbatim to the NeMo command.
+  # Use this for anything not modelled above rather than editing train.py.
+  #
+  # fused_batch_size chunks the RNNT joint+loss so the (B x T x U x V) tensor is
+  # never materialised for the whole batch at once. The stock 2 OOM'd on an A40 at
+  # step 240 (tried to allocate 7.08 GiB with 2.43 GiB free); 1 halves that peak
+  # for a few percent of speed. Raise it again on an 80 GB card.
+  extra_overrides:
+    - ++model.joint.fused_batch_size=1
+
+eval:
+  # Every latency the checkpoint supports. Benchmarked for both baseline and finetune.
+  att_context_sizes: [[56, 0], [56, 3], [56, 6], [56, 13]]
+  batch_size: 8
+  # Baseline = untouched base model prompted with its closest existing language.
+  baseline_lang: fr-FR
+  worst_n: 20
+
+publish:
+  repo_id: jsbeaudry/nemotron-3.5-asr-streaming-0.6b-ht
+  private: true

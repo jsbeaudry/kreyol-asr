@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "kreyol-asr"
+version = "0.1.0"
+description = "Fine-tune NVIDIA Nemotron 3.5 streaming ASR for Haitian Creole from Hugging Face datasets"
+readme = "README.md"
+requires-python = ">=3.10,<3.13"
+license = { text = "Apache-2.0" }
+
+# Core deps install cleanly on macOS arm64 (no CUDA, no NeMo).
+# Everything in `prepare`, `inspect`, `bench --score-only` and `push` runs with just these.
+dependencies = [
+    "typer>=0.12",
+    "rich>=13.7",
+    "pyyaml>=6.0",
+    "datasets>=2.19",
+    "huggingface-hub>=0.23.2",
+    "soundfile>=0.12",
+    "soxr>=0.3",
+    "numpy>=1.24",
+    "tokenizers>=0.19",
+    "jiwer>=3.0",
+]
+
+[project.optional-dependencies]
+# Needs torch. Installs on macOS (CPU wheels) for the .nemo patch + tests.
+patch = ["torch>=2.2", "omegaconf>=2.3"]
+# GPU/Linux only. Installed inside the NeMo container, never on the Mac.
+gpu = [
+    "torch>=2.2",
+    "omegaconf>=2.3",
+    "nemo_toolkit[asr]>=2.0",
+    "lhotse>=1.24",
+]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+kreyol-asr = "kreyol_asr.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kreyol_asr"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
