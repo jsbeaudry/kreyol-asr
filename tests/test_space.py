@@ -35,6 +35,39 @@ def test_both_tabs_exist():
     assert "Text to speech" in APP
 
 
+def _worker_gen_params() -> dict:
+    """GEN_PARAMS as the worker actually defines it, read from its source."""
+    handler = (ROOT / "serverless-tts" / "handler.py").read_text()
+    tree = ast.parse(handler)
+    node = next(n for n in tree.body
+                if isinstance(n, ast.Assign)
+                and getattr(n.targets[0], "id", None) == "GEN_PARAMS")
+    return ast.literal_eval(node.value)
+
+
+def test_generation_sliders_match_the_worker_ranges():
+    """Slider bounds must equal the worker's own, or a user drags to a value the
+    worker silently clamps and the audio does not change."""
+    params = _worker_gen_params()
+    assert set(params) == {"temperature", "top_p", "repetition_penalty"}
+    for name, (default, low, high) in params.items():
+        assert f"gr.Slider({low}, {high}, value={default}" in APP, (
+            f"{name}: Space slider must be gr.Slider({low}, {high}, value={default})")
+
+
+def test_reset_button_restores_the_worker_defaults():
+    params = _worker_gen_params()
+    defaults = tuple(params[k][0] for k in
+                     ("temperature", "top_p", "repetition_penalty"))
+    assert f"lambda: {defaults}" in APP
+
+
+def test_space_char_limit_matches_the_worker_default():
+    handler = (ROOT / "serverless-tts" / "handler.py").read_text()
+    assert "MAX_CHARS = 120" in APP
+    assert '"MAX_CHARS", "120"' in handler
+
+
 def test_all_eight_voices_are_offered():
     for v in ("nana", "deniz", "mako", "mariz", "klodin", "jan", "job", "leo"):
         assert f'"{v}"' in APP

@@ -43,7 +43,7 @@ LATENCIES = {
 }
 
 VOICES = ["nana", "deniz", "mako", "mariz", "klodin", "jan", "job", "leo"]
-MAX_CHARS = 600  # mirrors the worker's own limit
+MAX_CHARS = 120  # mirrors the worker's own limit
 
 # A cold worker pulls >10 GB and imports NeMo before it can serve anything.
 POLL_SECONDS = 2
@@ -159,7 +159,8 @@ def transcribe(audio, latency_label, progress=gr.Progress()):
 
 # --- TTS ---------------------------------------------------------------------
 
-def synthesize(text, voice, progress=gr.Progress()):
+def synthesize(text, voice, temperature, top_p, repetition_penalty,
+               progress=gr.Progress()):
     text = (text or "").strip()
     if not text:
         return None, "Type some Creole text first."
@@ -167,7 +168,9 @@ def synthesize(text, voice, progress=gr.Progress()):
         return None, f"That is {len(text)} characters; the worker's limit is {MAX_CHARS}."
 
     started = time.time()
-    payload = {"input": {"text": text, "voice": voice}}
+    payload = {"input": {"text": text, "voice": voice,
+                         "temperature": temperature, "top_p": top_p,
+                         "repetition_penalty": repetition_penalty}}
     try:
         status_json, out = _run_and_poll(TTS_BASE, payload, started, progress)
     except WorkerError as e:
@@ -184,10 +187,14 @@ def synthesize(text, voice, progress=gr.Progress()):
     # Voice levels vary a lot between speakers, so show the peak rather than
     # leaving a quiet result looking like a failure.
     peak = float(np.abs(data).max() or 0.0)
+    knobs = " · ".join(
+        f"{k} {out[k]:g}" for k in ("temperature", "top_p", "repetition_penalty")
+        if out.get(k) is not None)
     metrics = (f"**{voice}** · {out.get('duration_s', len(data) / sr):.2f}s @ "
                f"{out.get('sample_rate', sr)} Hz · "
                + _timing(status_json, started,
-                         f" · `{out.get('device', '?')}` · peak {peak:.3f}"))
+                         f" · `{out.get('device', '?')}` · peak {peak:.3f}")
+               + (f"\n\n<sub>{knobs}</sub>" if knobs else ""))
     return (sr, data), metrics
 
 
@@ -242,11 +249,32 @@ with gr.Blocks(title="Haitian Creole speech") as demo:
                     placeholder="Bonjou, koman ou ye?",
                     info=f"Up to {MAX_CHARS} characters.")
                 voice = gr.Dropdown(VOICES, value="nana", label="Voice")
+            with gr.Accordion("Generation settings", open=False):
+                gr.Markdown(
+                    "_KaniTTS exposes only these three per call — `max_new_tokens` "
+                    "is fixed when the model loads. Values outside a slider's range "
+                    "are clamped by the worker, which reports back what it used._")
+                with gr.Row():
+                    temperature = gr.Slider(0.1, 2.0, value=1.0, step=0.05,
+                                            label="Temperature",
+                                            info="Higher is more varied, less stable.")
+                    top_p = gr.Slider(0.05, 1.0, value=0.95, step=0.01,
+                                      label="Top-p",
+                                      info="Nucleus sampling cutoff.")
+                    repetition_penalty = gr.Slider(1.0, 2.0, value=1.1, step=0.05,
+                                                   label="Repetition penalty",
+                                                   info="Higher discourages loops "
+                                                        "and stuck syllables.")
+                reset = gr.Button("Reset to defaults", size="sm")
+                reset.click(lambda: (1.0, 0.95, 1.1), None,
+                            [temperature, top_p, repetition_penalty])
             tts_go = gr.Button("Generate speech", variant="primary")
             out_audio = gr.Audio(label="Generated speech", type="numpy",
                                  autoplay=False, show_download_button=True)
             tts_metrics = gr.Markdown()
-            tts_go.click(synthesize, [tts_text, voice], [out_audio, tts_metrics])
+            tts_go.click(synthesize,
+                         [tts_text, voice, temperature, top_p, repetition_penalty],
+                         [out_audio, tts_metrics])
 
             gr.Examples(
                 [["Bonjou, koman ou ye?", "nana"],

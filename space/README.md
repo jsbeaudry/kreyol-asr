@@ -1,6 +1,6 @@
 ---
 title: Haitian Creole speech (ASR + TTS)
-emoji: 🇭🇹
+emoji: 🗣️
 colorFrom: blue
 colorTo: red
 sdk: gradio
@@ -39,8 +39,20 @@ which has no Creole slot, scores 98.2% on the same clips.
 
 [`jsbeaudry/haitian-kani-ht-v3`](https://huggingface.co/jsbeaudry/haitian-kani-ht-v3)
 — a KaniTTS voice model for Kreyol with eight speakers: `nana`, `deniz`, `mako`,
-`mariz`, `klodin`, `jan`, `job`, `leo`. Output is 22050 Hz mono, up to 600
+`mariz`, `klodin`, `jan`, `job`, `leo`. Output is 22050 Hz mono, up to 120
 characters per request.
+
+Sampling is adjustable under **Generation settings**:
+
+| knob | default | range | effect |
+|---|---:|---|---|
+| temperature | 1.0 | 0.1 – 2.0 | higher is more varied, less stable |
+| top_p | 0.95 | 0.05 – 1.0 | nucleus sampling cutoff |
+| repetition_penalty | 1.1 | 1.0 – 2.0 | higher discourages loops and stuck syllables |
+
+Those are the only three `KaniTTS.__call__` accepts — `max_new_tokens` is fixed
+when the model loads, so it cannot be set per request. Out-of-range values are
+clamped by the worker, which reports back what it used.
 
 Level varies between speakers — `jan` came back about 9 dB quieter than `nana` on
 the same length of text. The UI reports the peak so a quiet result is not

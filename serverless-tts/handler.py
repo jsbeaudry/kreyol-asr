@@ -3,6 +3,8 @@
 Request:
     {"input": {"text": "Bonjou, koman ou ye?", "voice": "nana"}}
     {"input": {"text": "...", "voice_id": "2ed43a0fa899"}}   # raw id
+    {"input": {"text": "...", "temperature": 0.8, "top_p": 0.9,
+               "repetition_penalty": 1.2}}                    # sampling knobs
 
 Response:
     {"audio_base64": "<wav>", "sample_rate": 22050, "duration_s": 1.8,
@@ -22,7 +24,16 @@ import soundfile as sf
 import torch
 
 MODEL_REPO = os.environ.get("MODEL_REPO", "jsbeaudry/haitian-kani-ht-v3")
-MAX_CHARS = int(os.environ.get("MAX_CHARS", "600"))
+MAX_CHARS = int(os.environ.get("MAX_CHARS", "120"))
+
+# The only per-call generation knobs KaniTTS.__call__ takes; max_new_tokens is
+# fixed at model construction, so it cannot be set per request.
+# name -> (default, low, high)
+GEN_PARAMS = {
+    "temperature": (1.0, 0.1, 2.0),
+    "top_p": (0.95, 0.05, 1.0),
+    "repetition_penalty": (1.1, 1.0, 2.0),
+}
 
 # KaniTTS selects a speaker by prefixing the prompt with an opaque id. Exposing
 # names keeps that detail out of every caller.
@@ -58,6 +69,24 @@ def _resolve_voice(inp: dict) -> tuple[str, str]:
     return name, VOICES[name]
 
 
+def _resolve_gen(inp: dict) -> dict:
+    """Clamp rather than reject: a slider a shade out of range should still make
+    audio, and the effective value is reported back so it is not silently lost."""
+    gen = {}
+    for name, (default, low, high) in GEN_PARAMS.items():
+        raw = inp.get(name, default)
+        if raw is None:
+            raw = default
+        try:
+            val = float(raw)
+        except (TypeError, ValueError):
+            raise ValueError(f"{name} must be a number, got {raw!r}") from None
+        if val != val:  # NaN survives float() and poisons generation
+            raise ValueError(f"{name} must be a number, got {raw!r}")
+        gen[name] = min(max(val, low), high)
+    return gen
+
+
 def handler(job):
     inp = (job or {}).get("input") or {}
     text = (inp.get("text") or "").strip()
@@ -68,11 +97,12 @@ def handler(job):
 
     try:
         voice, speaker_id = _resolve_voice(inp)
+        gen = _resolve_gen(inp)
     except ValueError as e:
         return {"error": str(e)}
 
     try:
-        audio, spoken = MODEL(f"{speaker_id}:{text}")
+        audio, spoken = MODEL(f"{speaker_id}:{text}", **gen)
     except Exception as e:  # noqa: BLE001 - returned to the caller
         return {"error": f"{type(e).__name__}: {e}"}
 
@@ -108,6 +138,8 @@ def handler(job):
         "voice_id": speaker_id,
         "text": spoken,
         "device": "cuda" if torch.cuda.is_available() else "cpu",
+        # Echo the values actually used, post-clamp.
+        **gen,
     }
 
 

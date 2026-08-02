@@ -206,3 +206,38 @@ def test_tts_image_smoke_tests_the_import_at_build_time():
     """The broken resolution surfaced only as a silent crash-loop on a live worker.
     A build-time import makes the same failure fail the build instead."""
     assert "import kani_tts" in TTS_DIRECTIVES
+
+
+@pytest.mark.skipif(not TTS.exists(), reason="serverless-tts/ not present")
+def test_tts_exposes_only_the_real_generation_knobs():
+    """KaniTTS.__call__ takes exactly temperature, top_p and repetition_penalty.
+    max_new_tokens is fixed at model construction and cannot be set per request."""
+    assert "GEN_PARAMS" in TTS_HANDLER
+    for k in ("temperature", "top_p", "repetition_penalty"):
+        assert f'"{k}"' in TTS_HANDLER
+    assert "max_new_tokens" not in TTS_HANDLER.split("GEN_PARAMS")[1].split("}")[0]
+
+
+@pytest.mark.skipif(not TTS.exists(), reason="serverless-tts/ not present")
+def test_tts_default_char_limit_is_120():
+    assert '"MAX_CHARS", "120"' in TTS_HANDLER
+
+
+@pytest.mark.skipif(not TTS.exists(), reason="serverless-tts/ not present")
+def test_tts_clamps_generation_params_and_echoes_them_back():
+    """Out-of-range values should still make audio, and the caller needs to see
+    which value was actually used."""
+    ns = {}
+    src = TTS_HANDLER.split("def _resolve_gen")[1].split("\ndef ")[0]
+    exec("GEN_PARAMS = {'temperature': (1.0, 0.1, 2.0), 'top_p': (0.95, 0.05, 1.0),"
+         " 'repetition_penalty': (1.1, 1.0, 2.0)}\ndef _resolve_gen" + src, ns)
+    f = ns["_resolve_gen"]
+    assert f({}) == {"temperature": 1.0, "top_p": 0.95, "repetition_penalty": 1.1}
+    assert f({"temperature": 9})["temperature"] == 2.0     # clamped high
+    assert f({"temperature": -3})["temperature"] == 0.1    # clamped low
+    assert f({"top_p": None})["top_p"] == 0.95             # explicit null -> default
+    assert f({"temperature": "0.8"})["temperature"] == 0.8  # numeric strings ok
+    with pytest.raises(ValueError):
+        f({"temperature": "hot"})
+    with pytest.raises(ValueError):
+        f({"temperature": float("nan")})
