@@ -18,43 +18,55 @@ type AsrOutput = {
   text?: string;
   note?: string;
   duration_s?: number;
+  latency_ms?: number;
   audio_rms?: number;
   audio_peak?: number;
   gain_applied?: number;
   device?: string;
 };
 
+type Clip = { blob: Blob; url: string; name: string };
+
 export function AsrPanel() {
   const [latency, setLatency] = useState(320);
+  const [clip, setClip] = useState<Clip | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [transcript, setTranscript] = useState("");
   const [meta, setMeta] = useState("");
-  const [clipUrl, setClipUrl] = useState<string | null>(null);
   const [recording, setRecording] = useState(false);
 
   const recorderRef = useRef<MediaRecorder | null>(null);
-  const clipRef = useRef<string | null>(null);
+  const clipUrlRef = useRef<string | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
 
   // Blob URLs are not garbage collected on their own.
   useEffect(
     () => () => {
-      if (clipRef.current) URL.revokeObjectURL(clipRef.current);
+      if (clipUrlRef.current) URL.revokeObjectURL(clipUrlRef.current);
       recorderRef.current?.stream.getTracks().forEach((t) => t.stop());
     },
     [],
   );
 
-  function setClip(blob: Blob) {
-    if (clipRef.current) URL.revokeObjectURL(clipRef.current);
+  /**
+   * Staging a clip never submits it. Transcription is a billed GPU call, so it
+   * waits for an explicit Transcribe.
+   */
+  function stageClip(blob: Blob, name: string) {
+    if (clipUrlRef.current) URL.revokeObjectURL(clipUrlRef.current);
     const url = URL.createObjectURL(blob);
-    clipRef.current = url;
-    setClipUrl(url);
+    clipUrlRef.current = url;
+    setClip({ blob, url, name });
+    // The old transcript belongs to the old clip.
+    setTranscript("");
+    setMeta("");
+    setError("");
   }
 
-  async function transcribe(blob: Blob) {
+  async function transcribe() {
+    if (!clip || busy) return;
     setError("");
     setTranscript("");
     setMeta("");
@@ -62,7 +74,7 @@ export function AsrPanel() {
     const started = performance.now();
     try {
       setStatus("Converting to 16 kHz WAV…");
-      const { base64, seconds } = await toAsrBase64(blob);
+      const { base64, seconds } = await toAsrBase64(clip.blob);
 
       const { output, executionTime, delayTime } = await runJob<AsrOutput>(
         "asr",
@@ -73,14 +85,18 @@ export function AsrPanel() {
       const text = (output.text ?? "").trim();
       setTranscript(text);
       const bits = [
-        `${latency} ms`,
+        // The worker echoes the latency it actually used; prefer that over the
+        // dropdown, which the user may have changed since submitting.
+        `${output.latency_ms ?? latency} ms`,
         `audio ${(output.duration_s ?? seconds).toFixed(2)}s`,
         `inference ${(executionTime / 1000).toFixed(2)}s`,
         `queue/cold ${(delayTime / 1000).toFixed(1)}s`,
         `total ${((performance.now() - started) / 1000).toFixed(1)}s`,
       ];
       if (output.audio_rms !== undefined) {
-        bits.push(`rms ${output.audio_rms.toFixed(4)} / peak ${(output.audio_peak ?? 0).toFixed(3)}`);
+        bits.push(
+          `rms ${output.audio_rms.toFixed(4)} / peak ${(output.audio_peak ?? 0).toFixed(3)}`,
+        );
       }
       if (output.gain_applied) bits.push(`gain ×${output.gain_applied.toFixed(1)}`);
       if (output.device) bits.push(output.device);
@@ -113,8 +129,7 @@ export function AsrPanel() {
         stream.getTracks().forEach((t) => t.stop());
         setRecording(false);
         const blob = new Blob(parts, { type: recorder.mimeType || "audio/webm" });
-        setClip(blob);
-        void transcribe(blob);
+        stageClip(blob, "Recording");
       };
       recorderRef.current = recorder;
       recorder.start();
@@ -160,7 +175,7 @@ export function AsrPanel() {
             className={`flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold shadow-sm transition disabled:opacity-60 ${
               recording
                 ? "bg-red-600 text-white hover:bg-red-700"
-                : "bg-brand-600 text-white hover:bg-brand-700"
+                : "border border-line bg-surface text-ink hover:bg-canvas"
             }`}
           >
             <MicIcon />
@@ -170,7 +185,7 @@ export function AsrPanel() {
           <button
             type="button"
             onClick={() => fileRef.current?.click()}
-            disabled={busy}
+            disabled={busy || recording}
             className="flex items-center gap-2 rounded-xl border border-line px-4 py-2.5 text-sm font-medium transition hover:bg-canvas disabled:opacity-60"
           >
             <UploadIcon />
@@ -184,23 +199,55 @@ export function AsrPanel() {
             onChange={(e) => {
               const file = e.target.files?.[0];
               e.target.value = "";
-              if (!file) return;
-              setClip(file);
-              void transcribe(file);
+              if (file) stageClip(file, file.name);
             }}
           />
+
+          {clip && (
+            <button
+              type="button"
+              onClick={() => {
+                if (clipUrlRef.current) URL.revokeObjectURL(clipUrlRef.current);
+                clipUrlRef.current = null;
+                setClip(null);
+                setTranscript("");
+                setMeta("");
+                setError("");
+              }}
+              disabled={busy}
+              className="text-sm text-muted transition hover:text-ink disabled:opacity-60"
+            >
+              Clear
+            </button>
+          )}
         </div>
 
-        {clipUrl && (
-          <audio src={clipUrl} controls className="mt-4 w-full" aria-label="Your clip" />
+        {clip ? (
+          <div className="mt-4">
+            <p className="mb-2 truncate text-xs text-muted">{clip.name}</p>
+            <audio src={clip.url} controls className="w-full" aria-label="Your clip" />
+          </div>
+        ) : (
+          <p className="mt-4 text-sm text-muted">
+            Record or upload Haitian Creole audio, listen back, then transcribe it.
+          </p>
         )}
+
+        <button
+          type="button"
+          onClick={transcribe}
+          disabled={!clip || busy || recording}
+          className="mt-4 w-full rounded-xl bg-brand-600 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {busy ? "Transcribing…" : "Transcribe"}
+        </button>
 
         <div className="mt-4 min-h-[112px] rounded-xl bg-canvas p-4">
           {transcript ? (
             <p className="whitespace-pre-wrap text-[15px] leading-relaxed">{transcript}</p>
           ) : (
             <p className="text-sm text-muted">
-              Record or upload Haitian Creole audio and the transcription appears here.
+              The transcription appears here.
             </p>
           )}
         </div>
