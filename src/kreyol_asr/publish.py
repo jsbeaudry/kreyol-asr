@@ -77,6 +77,31 @@ def push(
     return url
 
 
+# Third-party corpora whose licence requires attribution wherever the model goes.
+# Keyed by `Source.slug`, so the citation is emitted automatically whenever that
+# source appears in prepare_stats.json — nobody has to remember to add it.
+SOURCE_ATTRIBUTION = {
+    "radio-haiti-inter": """### Radio Haiti-Inter
+
+Havard, W.; Ziane, R.; Menclé, M.; Coavoux, M.; Lecouteux, B.; Schang, E.
+*Radio Haïti-Inter (sample-1)*. Zenodo, 2025. Laboratoire Ligérien de Linguistique
+(Université d'Orléans) and Laboratoire d'Informatique de Grenoble (Université Grenoble
+Alpes), ANR CREAM (ANR-20-CE38-0006).
+[doi:10.5281/zenodo.17818122](https://doi.org/10.5281/zenodo.17818122) —
+**CC-BY-4.0**. Used here **with modifications**: re-segmented to the 1–15 s window,
+filtered by confidence and by agreement with an earlier checkpoint of this model, and
+Creole clitics restyled to the apostrophe spelling used by the rest of the corpus.
+
+The transcripts in that release are machine-generated. The model that produced them is
+described in:
+
+Havard, W. N.; Govain, R.; Lecouteux, B.; Schang, E. *Self-Supervised Models of Speech
+Processing for Haitian Creole*. Interspeech 2025, 4018–4022.
+[doi:10.21437/Interspeech.2025-1852](https://doi.org/10.21437/Interspeech.2025-1852)
+""",
+}
+
+
 def model_card(*, repo_id: str, base_model: str, lang_tag: str, slot: int,
                warm_start_from: str | None, benchmark: dict | None,
                data_stats: dict | None) -> str:
@@ -84,10 +109,31 @@ def model_card(*, repo_id: str, base_model: str, lang_tag: str, slot: int,
 
     bench_md = render_report(benchmark) if benchmark and benchmark.get("results") else \
         "_No benchmark recorded for this upload._"
-    hours = (data_stats or {}).get("total_hours", "n/a")
-    sources = "\n".join(f"- `{k}` — {v} h"
-                        for k, v in (data_stats or {}).get("per_source_hours", {}).items()) \
-        or "- not recorded"
+    stats = data_stats or {}
+    hours = stats.get("total_hours", "n/a")
+    per_source = stats.get("per_source_hours", {})
+    sources = "\n".join(f"- `{k}` — {v} h" for k, v in per_source.items()) or "- not recorded"
+
+    pseudo_h = stats.get("pseudo_labeled_hours") or 0
+    pseudo_md = f"""
+### Pseudo-labeled data
+
+**{pseudo_h} h** of the training data is real audio carrying **machine-generated
+transcripts** rather than human ones. Those clips were filtered on two independent
+signals — the source corpus's own per-segment confidence, and per-segment CER agreement
+with an earlier checkpoint of this model — and were excluded from validation and test,
+so the benchmark above is measured entirely against human-labelled recordings. Residual
+label noise in the training set is expected.
+""" if pseudo_h else ""
+    pseudo_limitation = (
+        " Where a source is machine-transcribed *by design* (see \"Pseudo-labeled data\" "
+        "above), it additionally had to clear a confidence threshold and agree with an "
+        "earlier checkpoint of this model before it was allowed to train." if pseudo_h else "")
+
+    attribution = "\n".join(SOURCE_ATTRIBUTION[k] for k in per_source if k in SOURCE_ATTRIBUTION)
+    attribution_md = f"\n## Attribution\n\n{attribution}\n" if attribution else ""
+    third_party_md = ("\nThird-party training corpora keep their own licences — see "
+                      "Attribution below." if attribution else "")
 
     return f"""---
 license: other
@@ -154,7 +200,7 @@ fine-tune requires mixing a replay set of the original languages into training.
 - Total: **{hours} h** of transcribed Haitian Creole speech, 16 kHz mono.
 
 {sources}
-
+{pseudo_md}
 ## Benchmark
 
 {bench_md}
@@ -202,7 +248,7 @@ safetensors requires NVIDIA's `.nemo`→HF converter. Use NeMo as shown above.
   recordings.
 - **Some sources are machine-transcribed.** Clips whose transcripts exceeded 25
   characters/second — degenerate repetition loops such as `pou pou pou pou …` — were
-  filtered out, but milder label noise below that threshold may remain.
+  filtered out, but milder label noise below that threshold may remain.{pseudo_limitation}
 - **Clips longer than 18 s were excluded** from training due to a GPU memory limit on a
   46 GB card, not for data-quality reasons. Long-utterance behaviour is therefore less
   well covered.
@@ -211,5 +257,5 @@ safetensors requires NVIDIA's `.nemo`→HF converter. Use NeMo as shown above.
 
 ## License
 
-Inherits [OpenMDW-1.1](https://huggingface.co/{base_model}) from the base model.
-"""
+Inherits [OpenMDW-1.1](https://huggingface.co/{base_model}) from the base model.{third_party_md}
+{attribution_md}"""

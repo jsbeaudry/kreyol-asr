@@ -17,7 +17,12 @@ def load_yaml(path: str | Path) -> dict[str, Any]:
 
 @dataclass
 class Source:
-    repo_id: str
+    # Exactly one of `repo_id` (Hugging Face) or `local_dir` (an audiofolder on
+    # disk). Local sources exist because Radio Haiti-Inter is 6 GB of Zenodo zips
+    # that get segmented on the training pod — round-tripping the slices through
+    # a private Hub repo would cost an upload per gate iteration and buy nothing.
+    repo_id: str | None = None
+    local_dir: str | None = None
     split: str = "train"
     config: str | None = None
     audio_column: str | None = None
@@ -28,10 +33,34 @@ class Source:
     # speaker/channel diversity, so it is kept out of val and test — scoring a
     # model on its own synthesis flatters the WER and hides real-world failure.
     synthetic: bool = False
+    # Real recordings, machine-generated transcripts. Kept out of val/test for a
+    # different reason than `synthetic`: the audio is fine, the *labels* are
+    # another model's output, so scoring against them measures agreement with
+    # that model rather than accuracy. Counted separately in the data report —
+    # lumping the two under one number hides which risk you are carrying.
+    pseudo_labeled: bool = False
+
+    def __post_init__(self) -> None:
+        if bool(self.repo_id) == bool(self.local_dir):
+            raise ValueError(
+                "Source needs exactly one of `repo_id` or `local_dir` "
+                f"(got repo_id={self.repo_id!r}, local_dir={self.local_dir!r})"
+            )
+
+    @property
+    def train_only(self) -> bool:
+        """Trains, never evaluates — for either reason."""
+        return self.synthetic or self.pseudo_labeled
+
+    @property
+    def kind(self) -> str:
+        if self.pseudo_labeled:
+            return "pseudo-labeled"
+        return "synthetic" if self.synthetic else "real"
 
     @property
     def slug(self) -> str:
-        base = self.repo_id.replace("/", "__")
+        base = (self.repo_id or Path(self.local_dir).name).replace("/", "__")
         return f"{base}__{self.config}" if self.config else base
 
 

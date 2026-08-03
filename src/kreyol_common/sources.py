@@ -90,10 +90,70 @@ def _iter_audiofolder(src, token: str | None, limit: int | None) -> Iterator[dic
         }
 
 
+def _iter_localdir(src, limit: int | None) -> Iterator[dict[str, Any]]:
+    """Read an audiofolder off local disk — same contract as `_iter_audiofolder`.
+
+    Used for corpora too large or too licence-encumbered to round-trip through the
+    Hub. `_decode` accepts `{"path": ...}`, so no audio is read here; the caller
+    decodes lazily exactly as it does for Hub sources.
+    """
+    import csv
+    from pathlib import Path
+
+    root = Path(src.local_dir)
+    if not root.is_dir():
+        raise RuntimeError(f"{root} is not a directory — nothing to prepare.")
+
+    meta = next((root / n for n in ("metadata.jsonl", "metadata.csv") if (root / n).exists()), None)
+    if meta is None:
+        # metadata.all.jsonl (every candidate) deliberately does NOT satisfy this:
+        # ungated pseudo-labels must not be trainable by accident.
+        raise RuntimeError(
+            f"{root}: no metadata.jsonl/metadata.csv. If this is the Radio Haiti "
+            f"corpus, run `kreyol-asr radio gate` — the ungated ingest writes "
+            f"metadata.all.jsonl, which is not accepted here on purpose."
+        )
+
+    if meta.suffix == ".jsonl":
+        recs = [json.loads(l) for l in meta.read_text().splitlines() if l.strip()]
+        fields = list(recs[0]) if recs else []
+    else:
+        rdr = csv.DictReader(meta.open())
+        recs, fields = list(rdr), list(rdr.fieldnames or [])
+
+    file_key = next((c for c in fields
+                     if c.lower() in ("file_name", "filename", "path", "audio", "file")), None)
+    if not file_key:
+        raise RuntimeError(f"{meta}: no file-name column ({fields})")
+    text_key = _pick(src.text_column, fields, TEXT_CANDIDATES, "text")
+    spk_key = _pick(src.speaker_column, fields, SPEAKER_CANDIDATES, "speaker", required=False)
+    console.print(f"  localdir -> file={file_key!r} text={text_key!r} "
+                  f"speaker={spk_key!r}  ({len(recs)} rows)")
+
+    for i, rec in enumerate(recs):
+        if limit and i >= limit:
+            return
+        path = root / str(rec.get(file_key, ""))
+        if not path.exists():
+            continue
+        yield {
+            "index": i,
+            "audio": {"path": str(path)},
+            "raw_text": rec.get(text_key),
+            "speaker": str(rec[spk_key]) if spk_key and rec.get(spk_key) is not None else None,
+        }
+
+
 def _iter_source(src, token: str | None, limit: int | None) -> Iterator[dict[str, Any]]:
     from datasets import Audio, load_dataset
 
-    kind = "synthetic" if src.synthetic else "real"
+    kind = src.kind
+    # Branch before `_is_audiofolder`, which would call list_repo_files(None).
+    if src.local_dir:
+        console.print(f"[bold]Loading[/bold] {src.local_dir} (local audiofolder, {kind})")
+        yield from _iter_localdir(src, limit)
+        return
+
     console.print(f"[bold]Loading[/bold] {src.repo_id} (split={src.split}, {kind})")
 
     if _is_audiofolder(src.repo_id, token):

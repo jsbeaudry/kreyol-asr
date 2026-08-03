@@ -69,6 +69,9 @@ These are the things that silently produce a worse model rather than an error:
 |---|---|---|
 | `prepare`, `inspect`, `patch`, `push` | yes | yes |
 | `train`, `bench` | no — needs CUDA + NeMo | yes |
+| `radio fetch/inspect/ingest/gate` | no — 6.2 GB down, ~9 GB extracted | yes |
+| `radio agree` | no — needs CUDA + NeMo | yes |
+| `radio review` | yes — that is the point | yes |
 
 NeMo needs Linux, an NVIDIA GPU and Python ≤3.12.
 
@@ -123,6 +126,57 @@ Durations are measured from decoded frames, never trusted from metadata. Audio i
 decoded with `soundfile` and resampled with `soxr` rather than going through
 `datasets`' decoding, which changed backends in v4 and now needs torchcodec/ffmpeg.
 
+## Radio Haiti-Inter — pseudo-labeled data
+
+[Zenodo 10.5281/zenodo.17818122](https://doi.org/10.5281/zenodo.17818122), **CC-BY-4.0**:
+~60 h of archival Haitian radio, 1957–2003, already 16 kHz mono PCM16. Spontaneous,
+multi-speaker, narrowband broadcast — the acoustic territory the other 18 sources lack.
+
+**Its transcripts are machine-generated.** They are the output of Havard et al.'s Kreyòl
+wav2vec2/data2vec ASR ([Interspeech 2025](https://doi.org/10.21437/Interspeech.2025-1852)),
+which scores ~21 % CER / ~34 % WER on its own test set — plausibly *worse* than this
+repo's fine-tune. The EAF headers say as much: `AUTHOR="ASR transcription - model-unknown"`.
+So none of it is trusted by default:
+
+```bash
+bash scripts/fetch_radio_haiti.sh                      # 6.2 GB, md5-verified, pod only
+kreyol-asr radio inspect --compare-manifest data/ht/manifests/train.json
+kreyol-asr radio ingest --splits train                 # -> metadata.all.jsonl
+kreyol-asr radio agree  --max-hours 5                  # pilot; then the full pass (GPU)
+kreyol-asr radio review --n 180                        # listen, fill the verdicts
+kreyol-asr radio gate   --review review/review.csv     # -> metadata.jsonl
+```
+
+Then uncomment the `local_dir` source in `configs/datasets.ht.yaml`.
+
+Design points worth knowing:
+
+- **Only `gate` writes `metadata.jsonl`.** `ingest` writes `metadata.all.jsonl`, which
+  `_iter_localdir` refuses — pseudo-labels cannot reach training ungated.
+- **`pseudo_labeled: true` keeps it out of val/test.** Scoring against another model's
+  transcripts measures agreement with that model, not accuracy. The 385-clip
+  human-labelled test set stays the headline metric, untouched.
+- **The agreement CER ignores orthography.** The corpus writes clitics space-separated
+  (`n ap`), this repo writes `n'ap`. Stripping punctuation turns `n'ap` into `nap`,
+  which still mismatches `n ap` — so the clitic is un-joined *before* punctuation is
+  stripped, or the gate would reject good labels over the most frequent tokens in the
+  language.
+- **The CER band is deliberately wide** (`0.05 < CER ≤ 0.45`). Keeping only near-zero
+  disagreement would train the model on what it already gets right. `radio review` is
+  what turns those edges from starting values into measurements.
+- **Segments are re-cut to 1–15 s**, splitting only on EAF word boundaries and dropping
+  anything over-long that has no usable alignment. 15 s, not 18, leaves margin under
+  `prepare`'s hard drop.
+- **Blend is controlled by `radio gate --max-hours`, not by `weight`** — `_apply_weights`
+  rounds and clamps to at least one copy, so `weight: 0.5` emits a full copy.
+- **Style.** These transcripts are lowercase and unpunctuated. Case and punctuation are
+  *not* invented here: they are diarization spans, many starting mid-sentence, so
+  sentence-initial capitalization would teach arbitrary capitalization. Report `bench`
+  both exact and `--normalize-scoring`.
+- **Attribution is automatic.** CC-BY-4.0 requires credit and a statement of changes;
+  `SOURCE_ATTRIBUTION` in `publish.py` is keyed by source slug, so the citation lands on
+  the model card whenever the source appears in `prepare_stats.json`.
+
 ## Benchmarking
 
 `kreyol-asr bench` scores **baseline vs fine-tuned at all four latencies**
@@ -136,7 +190,7 @@ Success looks like a clear WER drop at `[56, 3]` versus baseline.
 ## Testing
 
 ```bash
-make test     # 48 tests, no GPU and no 2.4 GB download required
+make test     # 282 tests, no GPU and no 2.4 GB download required
 ```
 
 The `.nemo` surgery is tested against a stub checkpoint that reproduces the real

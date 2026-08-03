@@ -30,6 +30,14 @@ train:
   # 30000 was a placeholder written before the data existed; 70 epochs over 47 h
   # would overfit hard. 10000 (~23 epochs) is a reasonable fine-tuning budget —
   # watch val WER and stop early if it turns up.
+  #
+  # WHEN RADIO HAITI IS ENABLED, retune these three together. At batch_duration=250,
+  # steps/epoch = train_hours*3600/250, so 45.9 h -> 661 and 66 h -> 950. To hold
+  # ~15 epochs: max_steps 14000, warmup_steps 700 (the 5% rule below), and
+  # val_check_interval 750 (~19 validation points; leaving it at 500 buys no extra
+  # information and costs ~40% more validation wall clock). Left at the 45.9 h values
+  # deliberately — the accepted Radio Haiti hours are not known until `radio gate`
+  # runs, and retuning now would mis-size a run that does not include the data.
   max_steps: 10000
   devices: 1
   precision: bf16

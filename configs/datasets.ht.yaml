@@ -60,6 +60,33 @@ sources:
     split: train
     synthetic: true
 
+  # ---- pseudo-labeled: real audio, MACHINE transcripts -----------------
+  # Radio Haiti-Inter, Zenodo 10.5281/zenodo.17818122, CC-BY-4.0 (attribution is
+  # required — see SOURCE_ATTRIBUTION in publish.py). ~60 h of archival broadcast
+  # Kreyòl, 1957-2003: spontaneous, multi-speaker, narrowband. Exactly the acoustic
+  # territory the 18 sources above lack.
+  #
+  # The transcripts are the output of Havard et al.'s Kreyòl wav2vec2 ASR (~21% CER
+  # on its own test set) — plausibly WORSE than this repo's fine-tune, so nothing is
+  # trusted by default. `pseudo_labeled: true` keeps it out of val/test entirely, and
+  # `local_dir` must point at the *gated* audiofolder: the ungated ingest writes
+  # metadata.all.jsonl, which `_iter_localdir` refuses.
+  #
+  # Commented out until the corpus exists on the machine running `prepare` — an
+  # uncommented local_dir pointing at nothing would break `make prepare` for everyone.
+  # To enable:
+  #   bash scripts/fetch_radio_haiti.sh
+  #   kreyol-asr radio inspect --compare-manifest data/ht/manifests/train.json
+  #   kreyol-asr radio ingest --splits train
+  #   kreyol-asr radio agree --max-hours 5      # pilot, then the full pass
+  #   kreyol-asr radio review --n 180           # listen, fill the verdicts
+  #   kreyol-asr radio gate --review review/review.csv --max-hours 5
+  # Blend is controlled by `radio gate --max-hours`, NOT by `weight`: _apply_weights
+  # rounds and clamps to at least one copy, so `weight: 0.5` emits a full copy.
+  #
+  # - local_dir: /workspace/corpora/radio-haiti/radio-haiti-inter
+  #   pseudo_labeled: true
+
   # ---- excluded on purpose --------------------------------------------
   # finance-in-creole-10001 (804 rows, 0.20 GB) matches finance-in-creole exactly;
   #   including it would just duplicate those clips.

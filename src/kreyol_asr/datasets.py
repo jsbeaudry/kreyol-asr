@@ -67,7 +67,7 @@ def prepare(cfg: DataConfig, base_model: str, token: str | None = None,
         with Progress(TextColumn("[progress.description]{task.description}"), BarColumn(),
                       TextColumn("{task.completed}"), TimeElapsedColumn(),
                       console=console) as bar:
-            task = bar.add_task(f"  {src.repo_id}", total=None)
+            task = bar.add_task(f"  {src.slug}", total=None)
             for item in _iter_source(src, token, limit):
                 bar.advance(task)
                 try:
@@ -137,6 +137,8 @@ def prepare(cfg: DataConfig, base_model: str, token: str | None = None,
                     "_source": src.slug,
                     "_speaker": item["speaker"],
                     "_synthetic": src.synthetic,
+                    "_pseudo": src.pseudo_labeled,
+                    "_train_only": src.train_only,
                 })
 
     if not records:
@@ -166,6 +168,7 @@ def prepare(cfg: DataConfig, base_model: str, token: str | None = None,
         "dropped": dict(drops),
         "split_mode": _split_real.last_mode,
         "synthetic_hours": round(_split.synthetic_hours, 3),
+        "pseudo_labeled_hours": round(_split.pseudo_hours, 3),
         "real_hours": round(_split.real_hours, 3),
         "tokenizer_coverage": cov,
         "tokenizer_verdict": TokenizerCoverage.verdict(cov),
@@ -186,32 +189,55 @@ def _apply_weights(rows: list[dict], weights: dict[str, float]) -> list[dict]:
 
 
 def _split(records: list[dict], spec: dict[str, Any]) -> dict[str, list[dict]]:
-    """Split, keeping TTS-generated clips out of val and test.
+    """Split, keeping train-only clips out of val and test.
 
-    A model scored on synthesized speech is scored on the narrow acoustic
-    distribution it was trained on, which reports a WER the model will not
-    reproduce on real recordings. Synthetic clips train; real clips evaluate.
+    Two kinds of clip are held back, for two different reasons:
+
+    - `synthetic`: TTS audio. A model scored on synthesized speech is scored on
+      the narrow acoustic distribution it was trained on, reporting a WER it will
+      not reproduce on real recordings.
+    - `pseudo_labeled`: real audio, machine-generated transcripts. Scoring against
+      another model's output measures agreement with that model, not accuracy —
+      and here the labelling model is plausibly the weaker of the two.
+
+    Both train; only human-labelled real recordings evaluate.
     """
-    synth = [r for r in records if r.get("_synthetic")]
-    real = [r for r in records if not r.get("_synthetic")]
+    # `_train_only` is derived, so fall back to the flags it derives from — a
+    # record built before this key existed must still be held back, not leak
+    # into test because a bookkeeping field was missing.
+    def train_only(r: dict) -> bool:
+        return bool(r.get("_train_only", r.get("_synthetic") or r.get("_pseudo")))
 
-    if synth and not real:
+    held = [r for r in records if train_only(r)]
+    real = [r for r in records if not train_only(r)]
+
+    if held and not real:
         raise RuntimeError(
-            "Every source is marked `synthetic: true`, so there is no real audio to "
-            "evaluate on. Add at least one real-recording source, or drop the flag if "
-            "these really are recordings."
+            "Every source is marked `synthetic: true` or `pseudo_labeled: true`, so "
+            "there is no real audio to evaluate on — val and test need human-labelled "
+            "recordings. Add at least one such source, or drop the flag if these "
+            "really are verified recordings."
         )
-    if not synth:
+
+    sh = sum(r["duration"] for r in records if r.get("_synthetic")) / 3600
+    ph = sum(r["duration"] for r in records if r.get("_pseudo")) / 3600
+    rh = sum(r["duration"] for r in real) / 3600
+    _split.synthetic_hours = sh
+    _split.pseudo_hours = ph
+    _split.real_hours = rh
+
+    if not held:
         return _split_real(real, spec)
 
     out = _split_real(real, spec)
-    out["train"].extend(synth)
-    sh = sum(r["duration"] for r in synth) / 3600
-    rh = sum(r["duration"] for r in real) / 3600
-    console.print(f"Held {sh:.2f} h of synthetic audio to train only; "
-                  f"val/test drawn from {rh:.2f} h of real audio")
-    _split.synthetic_hours = sh
-    _split.real_hours = rh
+    out["train"].extend(held)
+    parts = []
+    if sh:
+        parts.append(f"{sh:.2f} h synthetic")
+    if ph:
+        parts.append(f"{ph:.2f} h pseudo-labeled")
+    console.print(f"Held {' + '.join(parts)} to train only; "
+                  f"val/test drawn from {rh:.2f} h of human-labelled real audio")
     return out
 
 
@@ -263,7 +289,29 @@ def _split_real(records: list[dict], spec: dict[str, Any]) -> dict[str, list[dic
 
 _split_real.last_mode = "unset"
 _split.synthetic_hours = 0.0
+_split.pseudo_hours = 0.0
 _split.real_hours = 0.0
+
+
+def _bucket_lines(s: dict[str, Any]) -> list[str]:
+    """Report the three data buckets separately.
+
+    Synthetic and pseudo-labeled are both train-only, but they carry different
+    risks — narrow acoustics versus noisy labels — and one combined number would
+    hide which one you are carrying.
+    """
+    synth, pseudo = s.get("synthetic_hours") or 0, s.get("pseudo_labeled_hours") or 0
+    if not synth and not pseudo:
+        return ["- All sources are real recordings with human transcripts"]
+    lines = [f"- Real, human-labelled: **{s['real_hours']} h** (trains and evaluates)"]
+    if synth:
+        lines.append(f"- Synthetic (TTS): **{synth} h** — trains only. Scoring on "
+                     f"synthesized speech reports a WER real recordings will not reproduce.")
+    if pseudo:
+        lines.append(f"- Pseudo-labeled: **{pseudo} h** — trains only. Real audio, "
+                     f"machine-generated transcripts; scoring against them would measure "
+                     f"agreement with the labelling model, not accuracy.")
+    return lines
 
 
 def _render_report(s: dict[str, Any]) -> str:
@@ -275,10 +323,7 @@ def _render_report(s: dict[str, Any]) -> str:
         f"- Language tag: `{s['language']}`",
         f"- Total: **{s['total_hours']} h** across **{s['total_clips']}** clips",
         f"- Split mode: {s['split_mode']}",
-        (f"- Real: **{s['real_hours']} h** (trains and evaluates) · "
-         f"Synthetic: **{s['synthetic_hours']} h** (trains only — TTS audio is kept "
-         f"out of val/test so the WER reflects real recordings)"
-         if s.get("synthetic_hours") else "- All sources are real recordings"),
+        *_bucket_lines(s),
         "",
         "## Splits",
         "",
