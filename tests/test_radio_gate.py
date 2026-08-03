@@ -19,7 +19,8 @@ def row(name, *, cer, conf, text="bonjou tout moun", dur=5.0, ours="bonjou tout 
     return {"file_name": f"wav/{name}.wav", "text": text, "speaker": "rec-a:SPEAKER_00",
             "recording_id": "rec-a", "corpus_split": "train", "start_ms": 0,
             "end_ms": int(dur * 1000), "duration": dur, "confidence": conf,
-            "cer": cer, "band": _band(cer), "ours": ours, "origin": "csv"}
+            "cer": cer, "band": _band(cer), "ours": ours, "origin": "csv",
+            "cer_reliable": bool(ours.strip())}
 
 
 @pytest.fixture
@@ -180,6 +181,45 @@ def test_band_accuracy_counts_only_checked_clips():
     acc = band_accuracy(rows, verdicts)
     assert acc["0.02-0.05"] == {"checked": 2, "label_ok": 1, "accuracy": 0.5}
     assert "0.45-0.60" not in acc, "an unchecked band has no measurement"
+
+
+# --- our decoder returning nothing is not a label error --------------------
+
+def test_empty_hypothesis_is_not_counted_as_disagreement(agreement):
+    """Measured on the first 5 h: our decoder emits nothing on 11.7% of clips, and
+    23.6% of clips under 2 s versus 1.5% above 10 s — a cache-aware streaming
+    warm-up artifact. Scored as CER 1.0 it would strip short clips wholesale."""
+    rows = ([row(f"ok{i}", cer=0.20, conf=0.97) for i in range(40)]
+            + [row(f"mute{i}", cer=1.0, conf=0.97, ours="", dur=1.5) for i in range(20)])
+    af, ag = agreement(rows)
+    s = gate(af, ag)
+    assert s["tiers"]["unscored"]["clips"] == 20
+    assert "reject_disagreement" not in s["tiers"]
+    kept = {json.loads(l)["file_name"]
+            for l in (af / "metadata.jsonl").read_text().splitlines()}
+    assert "wav/mute0.wav" in kept
+
+
+def test_unscored_clips_still_need_confidence(agreement):
+    """With no CER evidence, confidence is the only signal left — so it must bind."""
+    rows = ([row(f"ok{i}", cer=0.20, conf=0.97) for i in range(40)]
+            + [row("mute_bad", cer=1.0, conf=0.30, ours="")])
+    af, ag = agreement(rows)
+    s = gate(af, ag)
+    assert s["tiers"].get("unscored", {"clips": 0})["clips"] == 0
+    assert ("reject_unscored_low_confidence" in s["tiers"]
+            or "reject_low_confidence" in s["tiers"])
+
+
+def test_reliability_is_derived_when_the_field_is_absent(agreement):
+    """Predictions written before this field existed must still be handled."""
+    rows = [row(f"ok{i}", cer=0.20, conf=0.97) for i in range(40)]
+    rows += [row("mute", cer=1.0, conf=0.97, ours="")]
+    for r in rows:
+        del r["cer_reliable"]
+    af, ag = agreement(rows)
+    s = gate(af, ag)
+    assert s["tiers"]["unscored"]["clips"] == 1
 
 
 # --- model resolution ------------------------------------------------------

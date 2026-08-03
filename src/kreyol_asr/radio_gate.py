@@ -170,7 +170,14 @@ def agree(audiofolder: Path, model: str, out: Path, *, lang: str = "ht-HT",
     for r, h in zip(rows, hyps):
         ours = h.get("pred_text", "") or ""
         cer = segment_cer(r["text"], ours)
-        scored.append({**r, "cer": round(cer, 5), "ours": ours, "band": _band(cer)})
+        # An empty hypothesis scores CER 1.0, but that is not evidence about the
+        # label — it is our decoder producing nothing. Measured on the first 5 h:
+        # 11.7% of clips, and strongly length-dependent (23.6% of clips under 2 s
+        # versus 1.5% above 10 s), i.e. a cache-aware streaming warm-up artifact.
+        # Treated as disagreement it would strip short clips from the corpus
+        # wholesale, which is the opposite of what the evidence supports.
+        scored.append({**r, "cer": round(cer, 5), "ours": ours, "band": _band(cer),
+                       "cer_reliable": bool(ours.strip())})
 
     path = out / "per_segment.jsonl"
     with open(path, "w") as fh:
@@ -347,6 +354,12 @@ def gate(audiofolder: Path, agreement: Path, *, review_csv: Path | None = None,
             tier = "reject_chars_per_second"
         elif r["confidence"] < min_confidence:
             tier = "reject_low_confidence"
+        elif not r.get("cer_reliable", bool((r.get("ours") or "").strip())):
+            # Our decoder emitted nothing, so the CER of 1.0 says nothing about the
+            # transcript. Fall back to the one signal that still applies. Kept in its
+            # own tier so the volume stays visible rather than blending into the band.
+            tier = ("unscored" if r["confidence"] >= band_confidence
+                    else "reject_unscored_low_confidence")
         elif r["cer"] > cer_band_high:
             tier = "reject_disagreement"
         elif r["cer"] <= cer_accept_below:
@@ -362,7 +375,7 @@ def gate(audiofolder: Path, agreement: Path, *, review_csv: Path | None = None,
             tier = "reject_band_low_confidence"
         tiers[tier] += 1
         hours[tier] += r["duration"] / 3600
-        if tier in ("consensus", "informative"):
+        if tier in ("consensus", "informative", "unscored"):
             accepted.append(r)
 
     accepted.sort(key=lambda r: (-r["confidence"], r["file_name"]))
@@ -383,7 +396,7 @@ def gate(audiofolder: Path, agreement: Path, *, review_csv: Path | None = None,
                            "--min-confidence, and check gate_report.md for why.")
 
     keys = ("file_name", "text", "speaker", "recording_id", "corpus_split", "start_ms",
-            "end_ms", "duration", "confidence", "cer", "band", "origin")
+            "end_ms", "duration", "confidence", "cer", "band", "origin", "cer_reliable")
     meta = audiofolder / "metadata.jsonl"
     with open(meta, "w") as fh:
         for r in accepted:
