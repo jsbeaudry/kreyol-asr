@@ -125,6 +125,11 @@ def train(
     tokenizer_dir: Path = typer.Option(Path("checkpoints/tokenizer")),
     max_steps: Optional[int] = typer.Option(None, help="Override max_steps (smoke tests)"),
     devices: Optional[int] = typer.Option(None, help="Override GPU count"),
+    lr: Optional[float] = typer.Option(
+        None, help="Override the learning rate. Continuing from an already fine-tuned "
+                   "checkpoint wants a lower one than a fresh run: that checkpoint sits "
+                   "on an annealed cosine, and restarting the schedule at the config's "
+                   "1e-4 undoes the anneal before it learns anything."),
     exp_dir: Optional[Path] = typer.Option(
         None, "--exp-dir",
         help="Override exp_manager.exp_dir. Give a smoke run its own directory: "
@@ -141,6 +146,8 @@ def train(
         tcfg["max_steps"] = max_steps
     if devices is not None:
         tcfg["devices"] = devices
+    if lr is not None:
+        tcfg["lr"] = lr
     if exp_dir is not None:
         tcfg["exp_dir"] = str(exp_dir)
     if not Path(init).exists():

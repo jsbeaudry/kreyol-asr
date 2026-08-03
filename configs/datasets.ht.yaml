@@ -91,8 +91,8 @@ sources:
   # Blend is controlled by `radio gate --max-hours`, NOT by `weight`: _apply_weights
   # rounds and clamps to at least one copy, so `weight: 0.5` emits a full copy.
   #
-  # - local_dir: /workspace/corpora/radio-haiti/radio-haiti-inter
-  #   pseudo_labeled: true
+  - local_dir: /workspace/corpora/radio-haiti/radio-haiti-inter
+    pseudo_labeled: true
 
   # ---- excluded on purpose --------------------------------------------
   # finance-in-creole-10001 (804 rows, 0.20 GB) matches finance-in-creole exactly;
