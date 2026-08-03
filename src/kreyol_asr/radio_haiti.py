@@ -572,6 +572,107 @@ def summarize(rows: list[dict], drops: Counter, **extra: Any) -> dict[str, Any]:
     }
 
 
+DATASET_CARD = """---
+license: cc-by-4.0
+language:
+- ht
+task_categories:
+- automatic-speech-recognition
+pretty_name: Radio Haiti-Inter (ingested for kreyol-asr)
+---
+
+# Radio Haiti-Inter — ingested for `kreyol-asr`
+
+Derived from the Radio Haiti-Inter public release. **The transcripts are
+machine-generated**, not human: they are the output of the authors' Kreyòl
+wav2vec2/data2vec ASR, which scores ~21% CER on its own test set. Treat them as
+pseudo-labels.
+
+{gate_note}
+
+## Changes from the source release
+
+CC-BY-4.0 requires these be stated:
+
+- Re-segmented to a {min_s}–{max_s} s window: short segments merged across gaps
+  <= {gap} ms within a speaker, over-long ones split **only on EAF word
+  boundaries**, and any over-long segment without a usable word alignment dropped
+  rather than cut mid-word.
+- Speaker labels namespaced per recording (`<recording_id>:SPEAKER_00`). The
+  source labels are per-recording pyannote diarization output, not identities —
+  `SPEAKER_00` appears in all 219 recordings, so the raw label would make 219
+  different people look like one speaker.
+- Text normalized (NFC, bracketed annotations stripped, apostrophes normalized)
+  and Creole `ap` clitics restyled to the apostrophe spelling (`n ap` -> `n'ap`)
+  used by the rest of the training corpus.
+- Audio unchanged at 16 kHz mono PCM16, sliced with 100 ms of context padding
+  clamped to neighbouring segments.
+
+## Fields
+
+`file_name`, `text`, `speaker`, `recording_id`, `corpus_split`, `start_ms`,
+`end_ms`, `duration`, `confidence` (the source corpus's own per-segment score),
+`ctc_score`, `n_words`, `origin` (`csv` | `merged` | `split` | `split+merged`).
+
+`ctc_score` is an unnormalized log-score that grows with length — it is not a
+quality signal on its own.
+
+## Attribution — CC-BY-4.0
+
+Havard, W.; Ziane, R.; Menclé, M.; Coavoux, M.; Lecouteux, B.; Schang, E.
+*Radio Haïti-Inter (sample-1)*. Zenodo, 2025. Laboratoire Ligérien de
+Linguistique (Université d'Orléans) and Laboratoire d'Informatique de Grenoble
+(Université Grenoble Alpes), ANR CREAM (ANR-20-CE38-0006).
+https://doi.org/{doi}
+
+The model that produced the transcripts:
+
+Havard, W. N.; Govain, R.; Lecouteux, B.; Schang, E. *Self-Supervised Models of
+Speech Processing for Haitian Creole*. Interspeech 2025, 4018–4022.
+https://doi.org/10.21437/Interspeech.2025-1852
+"""
+
+_UNGATED_NOTE = ("`metadata.all.jsonl` is every candidate. Nothing here has passed a "
+                 "quality gate — see `kreyol-asr radio agree` / `radio gate`.")
+_GATED_NOTE = ("`metadata.jsonl` holds the clips that passed the two-signal gate "
+               "(the source corpus's own confidence, plus per-segment CER agreement "
+               "with an independently trained model). `metadata.all.jsonl` is every "
+               "candidate, including the rejected ones.")
+
+
+def push_dataset(audiofolder: Path, repo_id: str, *, private: bool = True,
+                 token: str | None = None) -> str:
+    """Upload the ingested audiofolder to the Hub with the licence card it requires.
+
+    The derived artifact, not the raw Zenodo zips — those are already public at the
+    DOI, so re-hosting them adds nothing. This is worth uploading because the slicing,
+    word-aligned splitting and merging are expensive to recompute and the pod's volume
+    does not survive termination.
+    """
+    from huggingface_hub import HfApi
+
+    if not (audiofolder / "metadata.all.jsonl").exists():
+        raise RuntimeError(f"{audiofolder} has no metadata.all.jsonl — run "
+                           f"`kreyol-asr radio ingest` first.")
+    if not token:
+        raise RuntimeError("HF_TOKEN is not set — cannot push.")
+
+    gated = (audiofolder / "metadata.jsonl").exists()
+    (audiofolder / "README.md").write_text(DATASET_CARD.format(
+        gate_note=_GATED_NOTE if gated else _UNGATED_NOTE,
+        min_s=int(MIN_S), max_s=int(MAX_S), gap=MAX_GAP_MS, doi=ZENODO_DOI))
+
+    api = HfApi(token=token)
+    api.create_repo(repo_id, repo_type="dataset", private=private, exist_ok=True)
+    console.print(f"Uploading {audiofolder} -> {repo_id} "
+                  f"({'private' if private else 'public'}) …")
+    # upload_large_folder, not upload_folder: ~29k small files is well past what a
+    # single-shot upload handles, and this one resumes instead of restarting.
+    api.upload_large_folder(repo_id=repo_id, repo_type="dataset",
+                            folder_path=str(audiofolder), private=private)
+    return f"https://huggingface.co/datasets/{repo_id}"
+
+
 def band_energy(wav_path: Path, *, frame_ms: int = 25, speech_percentile: float = 60.0,
                 max_seconds: float = 120.0) -> dict[str, float]:
     """Where the energy actually sits, measured on speech frames only.

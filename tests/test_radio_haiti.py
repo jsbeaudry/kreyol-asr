@@ -253,3 +253,76 @@ def test_band_energy_declines_to_guess_on_a_stub(tmp_path):
     p = tmp_path / "tiny.wav"
     sf.write(p, np.zeros(100, dtype="float32"), 16000)
     assert band_energy(p) == {}, "too short to frame — must return nothing, not zeros"
+
+
+# --- dataset card ----------------------------------------------------------
+
+def test_dataset_card_states_the_licence_and_the_changes(tmp_path, monkeypatch):
+    """CC-BY-4.0 requires credit, a licence, AND an indication of changes. The
+    corpus is re-segmented, filtered and restyled, so the last one is not optional."""
+    from kreyol_asr import radio_haiti as rh
+
+    folder = tmp_path / "radio-haiti-inter"
+    folder.mkdir()
+    (folder / "metadata.all.jsonl").write_text("{}\n")
+
+    captured = {}
+
+    class FakeApi:
+        def __init__(self, token=None):
+            captured["token"] = token
+
+        def create_repo(self, repo_id, **kw):
+            captured["repo"] = repo_id
+            captured["private"] = kw.get("private")
+
+        def upload_large_folder(self, **kw):
+            captured["folder"] = kw["folder_path"]
+
+    monkeypatch.setattr("huggingface_hub.HfApi", FakeApi)
+    rh.push_dataset(folder, "me/radio", private=True, token="hf_x")
+
+    card = (folder / "README.md").read_text()
+    assert "cc-by-4.0" in card
+    assert "10.5281/zenodo.17818122" in card
+    assert "10.21437/Interspeech.2025-1852" in card
+    assert "Changes from the source release" in card
+    assert "machine-generated" in card
+    assert captured["private"] is True
+
+
+def test_card_says_whether_the_clips_were_gated(tmp_path, monkeypatch):
+    """An ungated dump must not read as if it had passed the quality gate."""
+    from kreyol_asr import radio_haiti as rh
+
+    class FakeApi:
+        def __init__(self, token=None): pass
+        def create_repo(self, *a, **k): pass
+        def upload_large_folder(self, **k): pass
+
+    monkeypatch.setattr("huggingface_hub.HfApi", FakeApi)
+    folder = tmp_path / "af"
+    folder.mkdir()
+    (folder / "metadata.all.jsonl").write_text("{}\n")
+
+    rh.push_dataset(folder, "me/r", token="hf_x")
+    assert "Nothing here has passed a quality gate" in (folder / "README.md").read_text()
+
+    (folder / "metadata.jsonl").write_text("{}\n")
+    rh.push_dataset(folder, "me/r", token="hf_x")
+    assert "passed the two-signal gate" in (folder / "README.md").read_text()
+
+
+def test_push_refuses_without_a_token_or_an_ingest(tmp_path):
+    import pytest as _pytest
+
+    from kreyol_asr import radio_haiti as rh
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    with _pytest.raises(RuntimeError, match="radio ingest"):
+        rh.push_dataset(empty, "me/r", token="hf_x")
+
+    (empty / "metadata.all.jsonl").write_text("{}\n")
+    with _pytest.raises(RuntimeError, match="HF_TOKEN"):
+        rh.push_dataset(empty, "me/r", token=None)

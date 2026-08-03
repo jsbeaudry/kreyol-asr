@@ -379,5 +379,24 @@ def radio_gate_cmd(
                       "values, not measurements. Run `radio review` before trusting them.")
 
 
+@radio.command("push")
+def radio_push(
+    audiofolder: Path = RADIO_FOLDER,
+    repo: str = typer.Option("jsbeaudry/radio-haiti-inter-ht", "--repo",
+                             help="Target dataset repo id"),
+    public: bool = typer.Option(False, help="Publish publicly instead of private"),
+):
+    """Upload the ingested audiofolder to the Hub with its CC-BY attribution card.
+
+    The derived artifact only — the raw Zenodo zips are already public at the DOI.
+    """
+    from .radio_haiti import push_dataset
+
+    if not hf_token():
+        raise typer.BadParameter("HF_TOKEN is not set — cannot push.")
+    url = push_dataset(audiofolder, repo, private=not public, token=hf_token())
+    console.print(f"[green]Pushed[/green] {url}")
+
+
 if __name__ == "__main__":
     app()
