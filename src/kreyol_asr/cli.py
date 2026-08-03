@@ -240,8 +240,13 @@ RADIO_FOLDER = typer.Option(RADIO_DEFAULT_FOLDER, "--audiofolder",
 # directory name, and it becomes the source label in data_report.md and on the card.
 RADIO_OUT = typer.Option(RADIO_DEFAULT_FOLDER, "--out", "-o", "--audiofolder",
                          help="Audiofolder to write")
-RADIO_AGREE = typer.Option(Path("/workspace/corpora/radio-haiti/agreement"), "--agreement",
+RADIO_DEFAULT_AGREE = Path("/workspace/corpora/radio-haiti/agreement")
+RADIO_AGREE = typer.Option(RADIO_DEFAULT_AGREE, "--agreement",
                            help="Output of `radio agree`")
+# `agree` writes this directory while the later commands read it, so it accepts
+# both spellings — --out reads naturally when producing, --agreement when consuming.
+RADIO_AGREE_OUT = typer.Option(RADIO_DEFAULT_AGREE, "--out", "-o", "--agreement",
+                               help="Directory to write predictions and per-segment CER")
 
 
 @radio.command("inspect")
@@ -302,7 +307,7 @@ def radio_ingest(
 @radio.command("agree")
 def radio_agree(
     audiofolder: Path = RADIO_FOLDER,
-    out: Path = RADIO_AGREE,
+    out: Path = RADIO_AGREE_OUT,
     config: str = FT_CFG,
     model: Optional[str] = typer.Option(None, help="Fine-tuned .nemo or repo id "
                                                    "(default: the config's publish repo)"),
