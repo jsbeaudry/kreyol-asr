@@ -29,6 +29,21 @@ MODEL_REPO = os.environ.get("MODEL_REPO", "jsbeaudry/haitian-kani-ht-v3")
 # and fails outright at 600 with "Special speech tokens not exist!".
 MAX_CHARS = int(os.environ.get("MAX_CHARS", "200"))
 
+# Truncation guard.
+#
+# The failure above is silent: generation stops, the request still succeeds, and
+# short audio comes back as if it were complete. It shows up in the ratio of
+# input characters to audio seconds, because the text keeps growing while the
+# audio does not. Measured by round-tripping generated speech back through ASR:
+#
+#   clean      120-240 chars   11.6 - 14.9 chars/s   (transcript matched input)
+#   truncated  260-450 chars   16.7 - 28.6 chars/s   (transcript lost the tail)
+#
+# 16.0 sits in the gap. This only annotates the response — the audio is still
+# returned, because a caller may prefer partial speech to nothing, and normal
+# speech rate varies with content.
+CHARS_PER_SEC_LIMIT = float(os.environ.get("TRUNCATION_CHARS_PER_SEC", "16.0"))
+
 # The only per-call generation knobs KaniTTS.__call__ takes; max_new_tokens is
 # fixed at model construction, so it cannot be set per request.
 # name -> (default, low, high)
@@ -133,7 +148,10 @@ def handler(job):
     if spoken.startswith(prefix):
         spoken = spoken[len(prefix):]
 
-    return {
+    chars_per_sec = (len(text) / info.duration) if info.duration > 0 else float("inf")
+    truncated = chars_per_sec > CHARS_PER_SEC_LIMIT
+
+    result = {
         "audio_base64": base64.b64encode(blob).decode(),
         "sample_rate": info.samplerate,
         "duration_s": round(info.duration, 3),
@@ -141,9 +159,21 @@ def handler(job):
         "voice_id": speaker_id,
         "text": spoken,
         "device": "cuda" if torch.cuda.is_available() else "cpu",
+        "chars_per_second": round(chars_per_sec, 2),
+        "truncated": truncated,
         # Echo the values actually used, post-clamp.
         **gen,
     }
+    if truncated:
+        # Say what was measured, not just that something is wrong.
+        result["note"] = (
+            f"Audio looks truncated: {len(text)} characters in "
+            f"{info.duration:.2f}s is {chars_per_sec:.1f} chars/s, above the "
+            f"{CHARS_PER_SEC_LIMIT:.1f} threshold. The end of the text was "
+            f"probably not spoken — send it in shorter pieces."
+        )
+        print(f"[truncation] {result['note']}", flush=True)
+    return result
 
 
 runpod.serverless.start({"handler": handler})

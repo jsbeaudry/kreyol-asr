@@ -68,6 +68,13 @@ def test_space_char_limit_matches_the_worker_default():
     assert '"MAX_CHARS", "200"' in handler
 
 
+def test_space_surfaces_truncation():
+    """The worker returns audio even when it detects truncation, so the client
+    has to say so or the user gets a clip that stops mid-thought."""
+    assert "truncated" in APP
+    assert "truncated_segments" in APP
+
+
 def test_all_eight_voices_are_offered():
     for v in ("nana", "deniz", "mako", "mariz", "klodin", "jan", "job", "leo"):
         assert f'"{v}"' in APP

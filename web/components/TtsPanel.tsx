@@ -54,6 +54,8 @@ type TtsOutput = {
   sample_rate?: number;
   duration_s?: number;
   device?: string;
+  truncated?: boolean;
+  note?: string;
 };
 
 export function TtsPanel({ onTrack }: { onTrack: (t: Track) => void }) {
@@ -91,6 +93,7 @@ export function TtsPanel({ onTrack }: { onTrack: (t: Track) => void }) {
 
     try {
       const chunks: Float32Array[] = [];
+      const truncatedSegments: number[] = [];
       let sampleRate = 0;
       let execTotal = 0;
       let device = "";
@@ -119,6 +122,9 @@ export function TtsPanel({ onTrack }: { onTrack: (t: Track) => void }) {
           );
         }
         sampleRate = sr;
+        // The worker still returns audio when it detects truncation; surface it
+        // rather than handing back a clip that stops mid-thought.
+        if (output.truncated) truncatedSegments.push(i + 1);
         execTotal += executionTime / 1000;
         device = output.device ?? device;
         chunks.push(samples);
@@ -141,6 +147,12 @@ export function TtsPanel({ onTrack }: { onTrack: (t: Track) => void }) {
           `total ${wall.toFixed(1)}s · peak ${peakOf(audio).toFixed(3)}` +
           (device ? ` · ${device}` : ""),
       );
+      if (truncatedSegments.length) {
+        setError(
+          `Segment ${truncatedSegments.join(", ")} looks truncated — the model ` +
+            `stopped before the end of that text. Try shorter sentences.`,
+        );
+      }
       setStatus("");
     } catch (e) {
       setStatus("");

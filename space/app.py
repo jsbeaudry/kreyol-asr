@@ -252,7 +252,7 @@ def synthesize(text, voice, temperature, top_p, repetition_penalty,
 
     started = time.time()
     chunks, sample_rate, exec_total, cold_total = [], None, 0.0, 0.0
-    used = {}
+    used, truncated_segments = {}, []
     for i, segment in enumerate(segments, 1):
         payload = {"input": {"text": segment, "voice": voice,
                              "temperature": temperature, "top_p": top_p,
@@ -284,6 +284,10 @@ def synthesize(text, voice, temperature, top_p, repetition_penalty,
             return None, (f"Segment {i} came back at {sr} Hz but segment 1 was "
                           f"{sample_rate} Hz; refusing to join them.")
         chunks.append(data)
+        if out.get("truncated"):
+            # The worker still returns audio, but the end of the text was not
+            # spoken. Saying so beats handing back a clip that stops mid-thought.
+            truncated_segments.append(i)
         exec_total += (status_json.get("executionTime") or 0) / 1000
         cold_total += (status_json.get("delayTime") or 0) / 1000
         used = {k: out[k] for k in ("temperature", "top_p", "repetition_penalty")
@@ -305,11 +309,16 @@ def synthesize(text, voice, temperature, top_p, repetition_penalty,
     wall = time.time() - started
     note = " (worker was cold)" if cold_total > 20 else ""
     seg_note = (f"**{len(segments)} segments** · " if len(segments) > 1 else "")
+    warning = ""
+    if truncated_segments:
+        which = ", ".join(str(i) for i in truncated_segments)
+        warning = (f"\n\n⚠️ **Segment {which} looks truncated** — the model stopped "
+                   f"before the end of that text. Try shorter sentences.")
     metrics = (f"**{voice}** · {seg_note}{len(audio) / sample_rate:.2f}s @ "
                f"{sample_rate} Hz · inference **{exec_total:.2f}s** · "
                f"queue/cold {cold_total:.1f}s{note} · total {wall:.1f}s · "
                f"peak {peak:.3f}"
-               + (f"\n\n<sub>{knobs}</sub>" if knobs else ""))
+               + (f"\n\n<sub>{knobs}</sub>" if knobs else "") + warning)
     return (sample_rate, audio), metrics
 
 

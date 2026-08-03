@@ -243,3 +243,27 @@ def test_tts_clamps_generation_params_and_echoes_them_back():
         f({"temperature": "hot"})
     with pytest.raises(ValueError):
         f({"temperature": float("nan")})
+
+
+@pytest.mark.skipif(not TTS.exists(), reason="serverless-tts/ not present")
+def test_tts_flags_truncated_generations():
+    """Past ~250 characters the model stops generating but the request still
+    succeeds, so short audio comes back looking complete. The chars/second ratio
+    separates the two: clean runs measured 11.6-14.9, truncated ones 16.7-28.6."""
+    assert "CHARS_PER_SEC_LIMIT" in TTS_HANDLER
+    assert '"truncated"' in TTS_HANDLER
+    assert '"chars_per_second"' in TTS_HANDLER
+    # The audio is still returned — a caller may prefer partial speech to none.
+    body = TTS_HANDLER.split("chars_per_sec = ")[1]
+    assert "audio_base64" in body, "truncation must annotate, not replace, the result"
+
+
+@pytest.mark.skipif(not TTS.exists(), reason="serverless-tts/ not present")
+def test_truncation_threshold_sits_between_the_measured_regimes():
+    import re
+    m = re.search(r'TRUNCATION_CHARS_PER_SEC", "([\d.]+)"', TTS_HANDLER)
+    assert m, "threshold must be overridable by env"
+    limit = float(m.group(1))
+    assert 14.9 < limit < 16.7, (
+        f"threshold {limit} must fall between the clean maximum (14.9 chars/s) "
+        f"and the truncated minimum (16.7 chars/s)")
