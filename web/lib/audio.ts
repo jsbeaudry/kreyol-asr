@@ -28,10 +28,86 @@ export function bytesToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
+/**
+ * Parse a PCM WAV ourselves.
+ *
+ * decodeAudioData resamples to the *device* rate — 44.1 kHz on most machines —
+ * which mislabels the worker's 22.05 kHz output and, worse, overshoots on
+ * interpolation: a clip that peaked at 0.98 comes back at 1.002 and clips when
+ * re-encoded. The worker always sends PCM WAV, so read it exactly.
+ *
+ * Returns null for anything that is not a PCM/float WAV, so callers can fall
+ * back to the browser decoder.
+ */
+function parseWav(
+  bytes: Uint8Array,
+): { samples: Float32Array; sampleRate: number } | null {
+  if (bytes.length < 44) return null;
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const tag = (o: number) =>
+    String.fromCharCode(view.getUint8(o), view.getUint8(o + 1), view.getUint8(o + 2), view.getUint8(o + 3));
+  if (tag(0) !== "RIFF" || tag(8) !== "WAVE") return null;
+
+  let format = 0;
+  let channels = 0;
+  let sampleRate = 0;
+  let bits = 0;
+  let dataOffset = -1;
+  let dataLength = 0;
+
+  // Walk the chunks: LIST/fact can sit between "fmt " and "data".
+  let offset = 12;
+  while (offset + 8 <= bytes.length) {
+    const id = tag(offset);
+    const size = view.getUint32(offset + 4, true);
+    const body = offset + 8;
+    if (id === "fmt ") {
+      format = view.getUint16(body, true);
+      channels = view.getUint16(body + 2, true);
+      sampleRate = view.getUint32(body + 4, true);
+      bits = view.getUint16(body + 14, true);
+    } else if (id === "data") {
+      dataOffset = body;
+      dataLength = Math.min(size, bytes.length - body);
+    }
+    offset = body + size + (size % 2); // chunks are word-aligned
+  }
+  if (dataOffset < 0 || !sampleRate || !channels) return null;
+
+  let interleaved: Float32Array;
+  if (format === 1 && bits === 16) {
+    const count = Math.floor(dataLength / 2);
+    interleaved = new Float32Array(count);
+    for (let i = 0; i < count; i += 1) {
+      interleaved[i] = view.getInt16(dataOffset + i * 2, true) / 0x8000;
+    }
+  } else if (format === 3 && bits === 32) {
+    const count = Math.floor(dataLength / 4);
+    interleaved = new Float32Array(count);
+    for (let i = 0; i < count; i += 1) {
+      interleaved[i] = view.getFloat32(dataOffset + i * 4, true);
+    }
+  } else {
+    return null; // compressed or exotic: let the browser handle it
+  }
+
+  if (channels === 1) return { samples: interleaved, sampleRate };
+  const frames = Math.floor(interleaved.length / channels);
+  const mono = new Float32Array(frames);
+  for (let f = 0; f < frames; f += 1) {
+    let sum = 0;
+    for (let c = 0; c < channels; c += 1) sum += interleaved[f * channels + c]!;
+    mono[f] = sum / channels;
+  }
+  return { samples: mono, sampleRate };
+}
+
 /** Mono float samples from any container the browser can decode. */
 export async function decodeToMono(
   bytes: Uint8Array,
 ): Promise<{ samples: Float32Array; sampleRate: number }> {
+  const parsed = parseWav(bytes);
+  if (parsed) return parsed;
   const ctx = new AudioContext();
   try {
     const copy = new ArrayBuffer(bytes.byteLength);
