@@ -39,13 +39,31 @@ def audit(
 
 
 @app.command()
+def preflight(config: Path = typer.Option("configs/tts.ht.yaml")) -> None:
+    """Check token, Hub access, deps, G2P and disk before anything expensive runs.
+
+    Exists because a pod that boots, clones, installs and *then* dies on the first
+    Hub call still bills for the boot and buries the cause in a stack trace.
+    """
+    from .preflight import run as _run
+
+    if _run(config):
+        raise typer.Exit(code=1)
+
+
+@app.command()
 def prepare(
     config: Path = typer.Option("configs/tts.ht.yaml"),
     limit: int = typer.Option(0, help="clips per source; 0 = all. Use a small value first."),
+    skip_preflight: bool = typer.Option(False, "--skip-preflight"),
 ) -> None:
     """Build the 24 kHz corpus and StyleTTS 2 manifests."""
     from .config import TTSDataConfig
     from .datasets import prepare as _prepare
+    from .preflight import run as _preflight
+
+    if not skip_preflight and _preflight(config):
+        raise typer.Exit(code=1)
 
     cfg = TTSDataConfig.load(config)
     stats = _prepare(cfg, _token(), limit or None)

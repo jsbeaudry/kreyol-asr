@@ -1,0 +1,88 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-50: #f2efff;
+  --color-brand-100: #e6e0ff;
+  --color-brand-200: #cec3ff;
+  --color-brand-300: #ab99ff;
+  --color-brand-400: #8b70ff;
+  --color-brand-500: #6d4aff;
+  --color-brand-600: #5b31f0;
+  --color-brand-700: #4b23cc;
+  --color-brand-800: #3d1ea6;
+  --color-brand-900: #2f177d;
+
+  --color-canvas: #f3f3f6;
+  --color-surface: #ffffff;
+  --color-line: #e8e8ee;
+  --color-ink: #14141a;
+  --color-muted: #6c6c7a;
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, sans-serif;
+}
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Tailwind does not style range tracks or thumbs, and the platform default
+   looks out of place next to everything else here. */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 9999px;
+  background: var(--color-line);
+  outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  background: var(--color-brand-500);
+  cursor: pointer;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.25);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #fff;
+  border-radius: 9999px;
+  background: var(--color-brand-500);
+  cursor: pointer;
+}
+input[type="range"]:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+input[type="range"]:focus-visible::-webkit-slider-thumb {
+  outline: 2px solid var(--color-brand-600);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
