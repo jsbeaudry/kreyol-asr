@@ -321,7 +321,8 @@ def radio_agree(
     stats = run_agree(audiofolder, model or ft.publish["repo_id"], out,
                       lang=ft.language["tag"], right_context=right_context,
                       batch_size=batch_size, min_confidence=min_confidence,
-                      max_hours=max_hours, device=device, arg_style=arg_style)
+                      max_hours=max_hours, device=device, arg_style=arg_style,
+                      token=hf_token())
     console.print_json(json.dumps(stats, indent=2))
 
 

@@ -12,7 +12,7 @@ import json
 import pytest
 
 from kreyol_asr.radio_gate import (_band, _keep_fraction, band_accuracy, gate,
-                                   norm_for_agreement, segment_cer)
+                                   norm_for_agreement, resolve_model, segment_cer)
 
 
 def row(name, *, cer, conf, text="bonjou tout moun", dur=5.0, ours="bonjou tout moun"):
@@ -180,6 +180,40 @@ def test_band_accuracy_counts_only_checked_clips():
     acc = band_accuracy(rows, verdicts)
     assert acc["0.02-0.05"] == {"checked": 2, "label_ok": 1, "accuracy": 0.5}
     assert "0.45-0.60" not in acc, "an unchecked band has no measurement"
+
+
+# --- model resolution ------------------------------------------------------
+
+def test_local_nemo_path_is_passed_through(tmp_path):
+    p = tmp_path / "model.nemo"
+    p.write_bytes(b"x")
+    assert resolve_model(str(p)) == str(p)
+
+
+def test_missing_local_path_is_not_mistaken_for_a_repo(tmp_path):
+    with pytest.raises(RuntimeError, match="not a Hub repo id"):
+        resolve_model(str(tmp_path / "absent.nemo"))
+
+
+def test_private_repo_failure_names_the_token(monkeypatch):
+    """NeMo's own error for a repo id points nowhere near the cause, and the
+    published checkpoint is private by default — so say so."""
+    import kreyol_asr.lang_slot as ls
+
+    monkeypatch.setattr(ls, "fetch_base_nemo",
+                        lambda *a, **k: (_ for _ in ()).throw(Exception("401")))
+    with pytest.raises(RuntimeError, match="HF_TOKEN is not set"):
+        resolve_model("me/private-model", token=None)
+
+
+def test_token_present_means_no_misleading_token_hint(monkeypatch):
+    import kreyol_asr.lang_slot as ls
+
+    monkeypatch.setattr(ls, "fetch_base_nemo",
+                        lambda *a, **k: (_ for _ in ()).throw(Exception("boom")))
+    with pytest.raises(RuntimeError) as e:
+        resolve_model("me/model", token="hf_x")
+    assert "HF_TOKEN is not set" not in str(e.value)
 
 
 def test_both_ok_counts_as_a_usable_label():

@@ -61,6 +61,33 @@ def segment_cer(reference: str, hypothesis: str) -> float:
     return float(jiwer.cer(ref, hyp))
 
 
+def resolve_model(target: str, token: str | None = None) -> str:
+    """A `.nemo` path stays as-is; a Hub repo id is downloaded first.
+
+    NeMo's streaming inference script takes `model_path=` and expects a file on
+    disk. Handing it `jsbeaudry/…-ht` fails deep inside NeMo with a message about
+    a missing file, which points nowhere near the actual cause.
+    """
+    if Path(target).exists():
+        return str(target)
+    if "/" not in target or target.endswith(".nemo"):
+        raise RuntimeError(
+            f"{target} does not exist and is not a Hub repo id. Pass a .nemo path "
+            f"or an org/name repo."
+        )
+    from .lang_slot import fetch_base_nemo
+
+    try:
+        return str(fetch_base_nemo(target, token=token))
+    except Exception as e:  # noqa: BLE001 - re-raised with the cause named
+        hint = "" if token else (
+            " HF_TOKEN is not set, and the published checkpoint is private by "
+            "default (see `publish.private` in the fine-tune config) — export it "
+            "on this host and retry."
+        )
+        raise RuntimeError(f"Could not fetch {target}: {e}.{hint}") from e
+
+
 def read_candidates(audiofolder: Path) -> list[dict]:
     meta = audiofolder / "metadata.all.jsonl"
     if not meta.exists():
@@ -94,12 +121,16 @@ def build_manifest(rows: list[dict], audiofolder: Path, out: Path, *, lang: str)
 def agree(audiofolder: Path, model: str, out: Path, *, lang: str = "ht-HT",
           right_context: int = 3, batch_size: int = 16, min_confidence: float = 0.0,
           max_hours: float | None = None, seed: int = 1804, device: int = 0,
-          nemo_dir: Path | None = None, arg_style: str = "hydra") -> dict[str, Any]:
+          nemo_dir: Path | None = None, arg_style: str = "hydra",
+          token: str | None = None) -> dict[str, Any]:
     """Transcribe every candidate with our own model and score the disagreement.
 
     One attention context only. The gate measures label agreement, not latency
     behaviour, so the other three contexts `bench` uses would be pure GPU waste.
     """
+    # Resolve before reading candidates: a missing token or typo'd repo should fail
+    # in seconds, not after building a manifest for 30k clips.
+    model_path = resolve_model(model, token=token)
     rows = read_candidates(audiofolder)
     before = len(rows)
     rows = [r for r in rows if r["confidence"] >= min_confidence]
@@ -120,7 +151,7 @@ def agree(audiofolder: Path, model: str, out: Path, *, lang: str = "ht-HT",
 
     out.mkdir(parents=True, exist_ok=True)
     manifest = build_manifest(rows, audiofolder, out / "candidates.json", lang=lang)
-    preds = run_inference(model, manifest, out / "preds", target_lang=lang,
+    preds = run_inference(model_path, manifest, out / "preds", target_lang=lang,
                           att_context=[LEFT_CONTEXT, right_context], batch_size=batch_size,
                           device=device, nemo_dir=nemo_dir, arg_style=arg_style)
     hyps = read_predictions(preds)
