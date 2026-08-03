@@ -151,20 +151,108 @@ export async function resample(
   return (await offline.startRendering()).getChannelData(0).slice();
 }
 
-/** Join TTS segments with a short silence so sentences breathe. */
+function rms(x: Float32Array): number {
+  if (x.length === 0) return 0;
+  let sum = 0;
+  for (let i = 0; i < x.length; i += 1) sum += x[i]! * x[i]!;
+  return Math.sqrt(sum / x.length);
+}
+
+/**
+ * Drop near-silent head and tail.
+ *
+ * Each segment is generated independently and comes with its own leading and
+ * trailing padding, so joining them raw produces pauses of uneven length that
+ * read as a stumble between sentences.
+ */
+export function trimSilence(x: Float32Array, sampleRate: number): Float32Array {
+  const level = rms(x);
+  if (level === 0) return x;
+  const floor = Math.max(level * 0.05, 1e-4);
+  const win = Math.max(1, Math.round(0.005 * sampleRate)); // 5 ms
+  const loud = (at: number) => {
+    let sum = 0;
+    const end = Math.min(at + win, x.length);
+    for (let i = at; i < end; i += 1) sum += Math.abs(x[i]!);
+    return sum / Math.max(1, end - at) > floor;
+  };
+
+  let start = 0;
+  while (start < x.length && !loud(start)) start += win;
+  let stop = x.length;
+  while (stop > start && !loud(Math.max(0, stop - win))) stop -= win;
+  if (stop <= start) return x; // all quiet — leave it alone
+
+  // Keep a little padding so consonants are not clipped off.
+  const pad = Math.round(0.02 * sampleRate);
+  return x.slice(Math.max(0, start - pad), Math.min(x.length, stop + pad));
+}
+
+/**
+ * Match each segment's level to the median of the set.
+ *
+ * Independent generations vary in loudness — measured at ~21% RMS difference
+ * (about 1.7 dB) between two segments of one passage, which is plainly audible
+ * as the voice "changing" mid-clip. Gain is capped so a genuinely quiet or
+ * near-empty segment cannot be pumped up into noise.
+ */
+export function matchLevels(chunks: Float32Array[]): Float32Array[] {
+  const levels = chunks.map(rms).filter((v) => v > 1e-5);
+  if (levels.length < 2) return chunks;
+  const sorted = [...levels].sort((a, b) => a - b);
+  const mid = sorted.length % 2
+    ? sorted[(sorted.length - 1) / 2]!
+    : (sorted[sorted.length / 2 - 1]! + sorted[sorted.length / 2]!) / 2;
+
+  return chunks.map((chunk) => {
+    const level = rms(chunk);
+    if (level < 1e-5) return chunk;
+    const gain = Math.min(Math.max(mid / level, 0.5), 2.0);
+    if (Math.abs(gain - 1) < 0.02) return chunk; // not worth touching
+    const out = new Float32Array(chunk.length);
+    for (let i = 0; i < chunk.length; i += 1) out[i] = chunk[i]! * gain;
+    return out;
+  });
+}
+
+/**
+ * Join TTS segments: trim each, match levels, then butt them together with a
+ * short silence and a few milliseconds of fade so the seam has no click.
+ */
 export function joinSegments(chunks: Float32Array[], sampleRate: number): Float32Array {
   if (chunks.length === 0) return new Float32Array(0);
   if (chunks.length === 1) return chunks[0]!;
+
+  const prepared = matchLevels(chunks.map((c) => trimSilence(c, sampleRate)));
   const gap = Math.round(SEGMENT_GAP_S * sampleRate);
+  const fade = Math.min(Math.round(0.006 * sampleRate), ...prepared.map((c) => c.length >> 1));
+
   const total =
-    chunks.reduce((n, c) => n + c.length, 0) + gap * (chunks.length - 1);
+    prepared.reduce((n, c) => n + c.length, 0) + gap * (prepared.length - 1);
   const out = new Float32Array(total);
   let offset = 0;
-  chunks.forEach((chunk, i) => {
-    if (i > 0) offset += gap; // the gap is already zeroed
+  prepared.forEach((chunk, i) => {
+    if (i > 0) offset += gap; // already zeroed
     out.set(chunk, offset);
+    // Ramp the seam edges only; the very start and end are left untouched.
+    if (fade > 0) {
+      if (i > 0) {
+        for (let k = 0; k < fade; k += 1) out[offset + k]! *= k / fade;
+      }
+      if (i < prepared.length - 1) {
+        const tail = offset + chunk.length - fade;
+        for (let k = 0; k < fade; k += 1) out[tail + k]! *= 1 - k / fade;
+      }
+    }
     offset += chunk.length;
   });
+
+  // Trimming and level matching can push the sum past full scale.
+  const peak = peakOf(out);
+  if (peak > 0.99) {
+    const scale = 0.99 / peak;
+    for (let i = 0; i < out.length; i += 1) out[i]! *= scale;
+  }
   return out;
 }
 
