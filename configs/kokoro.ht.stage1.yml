@@ -1,0 +1,84 @@
+# StyleTTS 2 Stage 1 for Haitian Creole, warm-started from Kokoro-82M.
+#
+# These keys are TOP-LEVEL on purpose. StyleTTS 2 reads them with
+# config.get('batch_size'), not config['training']['batch_size'] — nesting them
+# silently falls back to defaults and the run looks fine while ignoring everything.
+
+log_dir: "exp/tts/stage1"
+save_freq: 2
+log_interval: 50
+device: "cuda"
+
+# 60 is a ceiling with early stopping, not a target. kokoro-deutsch used 200 from a
+# weaker init; we warm-start from the released checkpoint. But do NOT trim this
+# aggressively: Kokoro ships no style_encoder and no predictor_encoder, so those two
+# train from scratch and the epochs are the budget they need.
+epochs_1st: 60
+batch_size: 16          # 48 GB (A40 / RTX A6000). 4 fits 12 GB.
+max_len: 400            # mel frames
+
+pretrained_model: "checkpoints/kokoro_ht_init.pth"
+second_stage_load_pretrained: false
+load_only_params: true
+
+data_params:
+  train_data: "data/ht_tts/manifests/stage1_train.txt"
+  val_data: "data/ht_tts/manifests/stage1_val.txt"
+  root_path: ""
+  OOD_data: "data/ht_tts/manifests/ood_texts.txt"
+  min_length: 50
+
+preprocess_params:
+  sr: 24000
+  spect_params:
+    n_fft: 2048
+    win_length: 1200
+    hop_length: 300     # == upsample_rates[10,6] x gen_istft_hop_size 5. Do not change.
+
+model_params:
+  multispeaker: true
+  dim_in: 64
+  hidden_dim: 512
+  max_conv_dim: 512
+  n_layer: 3
+  n_mels: 80
+  n_token: 178
+  max_dur: 50
+  style_dim: 128
+  dropout: 0.2
+
+  # MUST be istftnet with exactly these rates. Upstream config_ft.yml ships hifigan,
+  # and a HiFi-GAN decoder produces weights that will not load into kokoro's KModel —
+  # a failure that only surfaces at publish time, after the whole run is paid for.
+  # Cheap check: iSTFTNet has 2 generator.ups layers, HiFi-GAN has 4.
+  decoder:
+    type: "istftnet"
+    upsample_rates: [10, 6]
+    upsample_kernel_sizes: [20, 12]
+    gen_istft_n_fft: 20
+    gen_istft_hop_size: 5
+    upsample_initial_channel: 512
+    resblock_kernel_sizes: [3, 7, 11]
+    resblock_dilation_sizes: [[1, 3, 5], [1, 3, 5], [1, 3, 5]]
+
+  slm:
+    model: "microsoft/wavlm-base-plus"
+    sr: 16000
+    hidden: 768
+    nlayers: 13
+    initial_channel: 64
+
+optimizer_params:
+  lr: 1.0e-4
+  bert_lr: 1.0e-5       # 10x lower: PL-BERT carries the linguistic prior and is the
+                        # piece most easily damaged by a small-data finetune.
+  ft_lr: 1.0e-4
+
+loss_params:
+  lambda_mel: 5.0
+  lambda_mono: 1.0
+  lambda_s2s: 1.0
+  lambda_F0: 1.0
+  lambda_norm: 1.0
+  lambda_dur: 1.0
+  lambda_ce: 20.0

@@ -1,0 +1,114 @@
+# Which Hugging Face datasets feed the Kokoro fine-tune.
+#
+#   kreyol-tts prepare --config configs/tts.ht.yaml
+#
+# Every source is private; HF_TOKEN must be set. Row counts are the exact footer
+# counts measured by `kreyol-tts audit`, not the guesses in configs/datasets.ht.yaml
+# (which says cmu has 399 rows; it has 6385).
+
+language: ht
+sample_rate: 24000        # Kokoro's iSTFTNet stack only lines up at 24 kHz. Not tunable.
+
+sources:
+  # ---- Tier A: the widest-band audio in the corpus, and it is synthetic --------
+  # openai-tts-data measures E>8k 2.6e-02, ABOVE stock Kokoro's own 1.66e-02. This
+  # inverts the usual assumption and is why Stage 1 trains on everything, not just
+  # the real recordings.
+  - repo_id: jsbeaudry/openai-tts-data # 4743
+    split: train
+    synthetic: true
+  - repo_id: jsbeaudry/ggl-tts-data # 553, E>8k 7.2e-03
+    split: train
+    synthetic: true
+  - repo_id: jsbeaudry/priye-kreyol # 23, E>8k 1.63e-02 — matches Kokoro almost exactly.
+    split: train #      The only real audio at Kokoro's bandwidth. Its speaker id is
+    #      the placeholder `anon`, so it is not a usable voice — but
+    #      whatever chain recorded it is worth reproducing.
+
+  # ---- Tier B: carries three of the four shipping voices ----------------------
+  - repo_id: jsbeaudry/learn-the-numbers # 1225. deniz/mariz/jan all take their best audio here.
+    split: train
+  - repo_id: jsbeaudry/justice-in-creole # 922, E>8k 1.6e-03
+    split: train
+
+  # ---- Mixed: bimodal by speaker, so tiering happens per (source, speaker) -----
+  # m1-collect's source median is 8.0e-07 (Tier C), but that is nana's 80 upsampled
+  # clips dragging it down. klodin (1.74e-03) and deniz (1.22e-03) inside it are
+  # Tier B. Aggregating by source would lose two shippable voices.
+  - repo_id: jsbeaudry/m1-collect # 3087
+    split: train
+
+  # ---- Tier C: Stage 1 only, never a Stage 2 reference ------------------------
+  - repo_id: jsbeaudry/bible-chapters-data # 2808, 95x below Kokoro
+    split: train
+  - repo_id: jsbeaudry/franc-haitian # 2282
+    split: train
+  - repo_id: jsbeaudry/franc-haitian-female # 1570
+    split: train
+  - repo_id: jsbeaudry/finance-in-creole # 804
+    split: train
+  - repo_id: jsbeaudry/ecommerce-creole # 292
+    split: train
+  - repo_id: jsbeaudry/media-social-2 # 2306, E>8k 4.1e-08 — 408,808x below Kokoro.
+    split: train #       24 kHz container, ~4 kHz of content.
+  - repo_id: jsbeaudry/media-social # 227, same story
+    split: train
+  - repo_id: jsbeaudry/new-data-format # 27. 48/44.1 kHz headers, E>8k 2.1e-06 —
+    split: train #      the cleanest demonstration that container != content.
+
+  # ---- Tier D: natively 16 kHz, E>8k exactly 0.00 -----------------------------
+  # Included for Stage 1 speaker diversity only. cmu is the corpus's largest source
+  # (6385 rows, ~16 h) with ~40 distinct speakers, which is worth having even though
+  # no 24 kHz voice can be built from it.
+  - repo_id: jsbeaudry/cmu_haitian_creole_speech # 6385
+    split: train
+  - repo_id: jsbeaudry/history-data # 592 — this is `leo`, hence no leo voicepack.
+    split: train
+
+  # ---- excluded ---------------------------------------------------------------
+  # creole-text-voice is byte-identical to openai-tts-data: 40/40 sampled audio md5s
+  # match, 100% of both. Including it would just be deduped away after paying to
+  # download it twice.
+
+quality:
+  tier_a_min_e8k: 5.0e-3 # stock Kokoro's own output measures 1.66e-2
+  tier_b_min_e8k: 5.0e-4
+  min_native_sr: 22050
+  stage1_tiers: [A, B, C]
+  stage2_tiers: [A, B]
+
+filters:
+  min_duration: 1.0 # StyleTTS2 alignment unreliable below ~1s
+  max_duration: 12.0 # mel frames = duration * 80
+  min_phonemes: 5
+  max_phonemes: 400 # PLBERT max_position_embeddings 512; leave headroom
+  max_phonemes_per_second: 22
+  max_clip_ratio: 0.005
+  max_dc_offset: 5.0e-3
+  min_snr_db: 15.0
+
+audio:
+  highpass_hz: 60 # kills DC + rumble; cmu needs it
+  target_lufs: -23.0 # EBU R128
+  peak_ceiling_db: -1.0
+  resample_quality: VHQ # HQ is fine for ASR features; a vocoder target wants VHQ
+  trim_top_db: 35.0
+  # Fixed onset padding: StyleTTS2's duration predictor learns whatever silence
+  # distribution it is fed, and inconsistent leading silence becomes inconsistent
+  # onset latency at inference — which is the thing this project exists to minimise.
+  lead_silence_ms: 50
+  tail_silence_ms: 150
+
+text:
+  lowercase: true # opposite of the ASR config: case carries no phonetic information
+  strip_bracketed: true
+  normalize_apostrophes: true # critical for l'ap / m'ap / k'ap elision
+  expand_numbers: true # learn-the-numbers is 1225 clips of numerals
+
+stage2:
+  min_clips: 300
+  max_clips: 900 # more overfits the 82M decoder to one channel
+
+val_utterances: 400
+seed: 1804
+output_dir: data/ht_tts

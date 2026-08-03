@@ -79,7 +79,7 @@ def test_storage_limit_is_recovered_when_datasets_masks_it(monkeypatch):
     Only a direct Hub read surfaces the real status, so the explainer probes and
     must still name the storage limit rather than blaming the network.
     """
-    import kreyol_asr.datasets as D
+    import kreyol_common.hub as D
 
     monkeypatch.setattr(D, "_probe_repo_access", lambda repo, token:
                         "HfHubHTTPError: 403 Forbidden: Private repository storage "
@@ -92,7 +92,7 @@ def test_storage_limit_is_recovered_when_datasets_masks_it(monkeypatch):
 
 
 def test_probe_is_skipped_when_the_error_already_says_it(monkeypatch):
-    import kreyol_asr.datasets as D
+    import kreyol_common.hub as D
 
     called = []
     monkeypatch.setattr(D, "_probe_repo_access", lambda r, t: called.append(1) or "")
@@ -102,6 +102,10 @@ def test_probe_is_skipped_when_the_error_already_says_it(monkeypatch):
 
 def test_unwritable_hf_home_is_explained(monkeypatch):
     """Must hold as root too — containers run as root, and os.access() lies there."""
+    # Stub the probe: unstubbed it makes a real Hub call whose response is spliced
+    # into the message and then re-scanned for "storage limit", so a transient API
+    # reply could flip the branch and fail this intermittently.
+    monkeypatch.setattr("kreyol_common.hub._probe_repo_access", lambda r, t: "")
     monkeypatch.setenv("HF_HOME", "/proc/cannot/create/here/.hf")
     msg = str(_explain_hub_error("me/ds", Exception("LocalEntryNotFoundError: check your connection")))
     assert "HF_HOME" in msg and "not usable" in msg
@@ -109,7 +113,7 @@ def test_unwritable_hf_home_is_explained(monkeypatch):
 
 def test_writable_hf_home_is_not_blamed(tmp_path, monkeypatch):
     monkeypatch.setenv("HF_HOME", str(tmp_path / "hf"))
-    monkeypatch.setattr("kreyol_asr.datasets._probe_repo_access", lambda r, t: "")
+    monkeypatch.setattr("kreyol_common.hub._probe_repo_access", lambda r, t: "")
     msg = str(_explain_hub_error("me/ds", Exception("some unrelated failure")))
     assert "HF_HOME" not in msg, "a healthy cache dir must not be reported as the cause"
 
@@ -126,6 +130,6 @@ def test_401_mentions_the_shadowed_token_trap(monkeypatch):
     monkeypatch.delenv("HF_HOME", raising=False)
     # Stub the probe: it makes a live Hub call, so without this the assertion
     # depends on the account's current state rather than on the code under test.
-    monkeypatch.setattr("kreyol_asr.datasets._probe_repo_access", lambda r, t: "")
+    monkeypatch.setattr("kreyol_common.hub._probe_repo_access", lambda r, t: "")
     msg = str(_explain_hub_error("me/ds", Exception("401 Client Error RepositoryNotFound")))
     assert "HF_TOKEN" in msg and "shadows" in msg

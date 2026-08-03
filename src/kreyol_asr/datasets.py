@@ -11,302 +11,36 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import random
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 import numpy as np
 import soundfile as sf
-from rich.console import Console
 from rich.progress import BarColumn, Progress, TextColumn, TimeElapsedColumn
 
 from . import SAMPLE_RATE
-from .config import DataConfig, Source
+from .config import DataConfig
 from .text import TokenizerCoverage, normalize, out_of_charset, style_stats
 
-console = Console()
-
-AUDIO_CANDIDATES = ["audio", "wav", "speech", "audio_filepath", "file", "path", "sound"]
-TEXT_CANDIDATES = ["text", "transcription", "transcript", "sentence", "normalized_text",
-                   "target", "label", "caption", "content"]
-SPEAKER_CANDIDATES = ["speaker_id", "speaker", "client_id", "spk_id", "spk", "session_id"]
-
-
-def _pick(explicit: str | None, columns: list[str], candidates: list[str], kind: str,
-          required: bool = True) -> str | None:
-    if explicit:
-        if explicit not in columns:
-            raise ValueError(f"{kind} column {explicit!r} not in dataset columns {columns}")
-        return explicit
-    lowered = {c.lower(): c for c in columns}
-    for cand in candidates:
-        if cand in lowered:
-            return lowered[cand]
-    if required:
-        raise ValueError(
-            f"Could not auto-detect the {kind} column among {columns}. "
-            f"Set `{kind}_column:` explicitly in the dataset config."
-        )
-    return None
+# Moved to `kreyol_common` when the TTS pipeline needed the same Hub access, and
+# re-exported here so every existing import and test keeps working unchanged.
+# The Hub helpers in particular encode three specific, expensively-learned failure
+# modes; two copies would mean the next one gets fixed in only one of them.
+from kreyol_common import console  # noqa: F401
+from kreyol_common.audio import AUDIO_EXT, _decode, to_mono  # noqa: F401
+from kreyol_common.columns import (AUDIO_CANDIDATES, SPEAKER_CANDIDATES,  # noqa: F401
+                                   TEXT_CANDIDATES, _pick)
+from kreyol_common.hub import (_explain_hub_error, _hf_home_problem,  # noqa: F401
+                               _probe_repo_access)
+from kreyol_common.sources import (_is_audiofolder, _iter_audiofolder,  # noqa: F401
+                                   _iter_source)
 
 
 def _to_mono_16k(array: np.ndarray, sr: int) -> np.ndarray:
-    arr = np.asarray(array, dtype=np.float32)
-    if arr.ndim > 1:  # (samples, channels) or (channels, samples)
-        arr = arr.mean(axis=1 if arr.shape[0] > arr.shape[1] else 0)
-    if sr != SAMPLE_RATE:
-        import soxr  # band-limited resampling; np.interp would alias into the mel bins
-
-        arr = soxr.resample(arr, sr, SAMPLE_RATE, quality="HQ").astype(np.float32)
-    return np.clip(arr, -1.0, 1.0)
-
-
-def _decode(entry: Any) -> tuple[np.ndarray, int] | None:
-    """Decode one audio cell to (samples, sample_rate).
-
-    We decode with soundfile rather than letting `datasets` do it: datasets>=4
-    routes decoding through torchcodec (which needs ffmpeg), while datasets<4
-    returns a plain array dict. Handling the raw bytes ourselves works on both
-    and keeps resampling under our control.
-    """
-    import io
-
-    if entry is None:
-        return None
-    # datasets<4 with decode=True
-    if isinstance(entry, dict) and entry.get("array") is not None:
-        return np.asarray(entry["array"]), int(entry.get("sampling_rate") or SAMPLE_RATE)
-    # decode=False -> {"path": ..., "bytes": ...}
-    if isinstance(entry, dict):
-        if entry.get("bytes"):
-            data, sr = sf.read(io.BytesIO(entry["bytes"]), dtype="float32", always_2d=False)
-            return data, sr
-        if entry.get("path"):
-            data, sr = sf.read(entry["path"], dtype="float32", always_2d=False)
-            return data, sr
-        return None
-    if isinstance(entry, (str, Path)):
-        data, sr = sf.read(str(entry), dtype="float32", always_2d=False)
-        return data, sr
-    # datasets>=4 torchcodec AudioDecoder, if it is installed after all
-    if hasattr(entry, "get_all_samples"):
-        s = entry.get_all_samples()
-        return np.asarray(s.data).squeeze(), int(s.sample_rate)
-    return None
-
-
-def _hf_home_problem() -> str | None:
-    """Return why HF_HOME can't be used as a cache, or None if it's fine.
-
-    Must actually attempt the write. `os.access()` consults the real uid's
-    permission bits and returns True for root on paths root still cannot use —
-    and containers run as root, which is exactly where a stale pod path like
-    /workspace/.hf on a laptop needs to be caught.
-    """
-    home = os.environ.get("HF_HOME")
-    if not home:
-        return None
-    probe = Path(home) / ".kreyol_write_test"
-    try:
-        probe.parent.mkdir(parents=True, exist_ok=True)
-        probe.write_text("x")
-        probe.unlink()
-        return None
-    except OSError as e:
-        return str(e)
-
-
-def _probe_repo_access(repo_id: str, token: str | None) -> str:
-    """Read one byte of one file, and report what actually goes wrong.
-
-    `datasets` collapses every Hub failure into "Couldn't find ... check your
-    connection", which hides 403s. Reading through HfFileSystem surfaces the real
-    status line, so the message the user sees names the true cause.
-    """
-    try:
-        from huggingface_hub import HfApi, HfFileSystem
-
-        info = HfApi(token=token).dataset_info(repo_id, files_metadata=True)
-        target = next((s.rfilename for s in info.siblings
-                       if s.rfilename.endswith((".parquet", ".wav", ".mp3", ".csv"))), None)
-        if not target:
-            return ""
-        with HfFileSystem(token=token).open(f"datasets/{repo_id}/{target}") as fh:
-            fh.read(1)
-        return ""  # reads are fine; the failure is something else
-    except Exception as e:  # noqa: BLE001 - this IS the diagnostic
-        return f"{type(e).__name__}: {e}"
-
-
-def _explain_hub_error(repo_id: str, err: Exception, token: str | None = None) -> RuntimeError:
-    """Turn Hub failures into something you can act on.
-
-    Three failure modes cost real debugging time on this project:
-
-    * A private-storage overage returns 403 on file *reads* while metadata calls
-      keep working, so listings succeed and only the download fails — and
-      `datasets` reports it as a connection problem.
-    * An unwritable HF_HOME (e.g. a pod path like /workspace/.hf carried into a
-      laptop .env) also surfaces as "check your connection", which it is not.
-    * A duplicated HF_TOKEN line in .env silently shadows the real token.
-    """
-    text = f"{type(err).__name__}: {err}"
-    if "storage limit" not in text.lower():
-        text += " | probe -> " + _probe_repo_access(repo_id, token)
-    if "storage limit" in text.lower() or "403" in text and "private" in text.lower():
-        return RuntimeError(
-            f"{repo_id}: Hugging Face is blocking file reads because the account's "
-            f"private-repo storage limit is reached. Metadata still resolves, which is "
-            f"why this looks like a permissions bug. Free up private storage or upgrade "
-            f"the plan, then re-run. See https://huggingface.co/docs/hub/storage-limits"
-        )
-    unwritable = _hf_home_problem()
-    if unwritable:
-        return RuntimeError(
-            f"{repo_id}: HF_HOME={os.environ.get('HF_HOME')!r} is not usable, so nothing "
-            f"can be cached ({unwritable}). Pod paths like /workspace/.hf do not exist on "
-            f"a laptop — comment HF_HOME out in .env when running locally. "
-            f"(Underlying error: {text[:160]})"
-        )
-    if "401" in text or "RepositoryNotFound" in text:
-        return RuntimeError(
-            f"{repo_id}: not found or not readable with the current token. If it is "
-            f"private, set HF_TOKEN in .env. Note a duplicated HF_TOKEN line in .env "
-            f"silently shadows the real one. (Underlying error: {text[:160]})"
-        )
-    return RuntimeError(f"{repo_id}: could not load — {text[:300]}")
-
-
-AUDIO_EXT = (".wav", ".mp3", ".flac", ".ogg", ".m4a", ".opus")
-
-
-def _is_audiofolder(repo_id: str, token: str | None) -> bool:
-    """True for repos that ship loose audio files instead of parquet shards."""
-    try:
-        from huggingface_hub import HfApi
-
-        files = HfApi(token=token).list_repo_files(repo_id, repo_type="dataset")
-    except Exception:  # noqa: BLE001 - fall back to the datasets path
-        return False
-    return (not any(f.endswith(".parquet") for f in files)
-            and any(f.lower().endswith(AUDIO_EXT) for f in files))
-
-
-def _iter_audiofolder(src: Source, token: str | None,
-                      limit: int | None) -> Iterator[dict[str, Any]]:
-    """Read a loose-file repo without going through `datasets`.
-
-    `datasets` 5.x routes audiofolder repos through an *encode* step that needs
-    torchcodec (`cast_column(Audio(decode=False))` raises ImportError). We only
-    ever want the raw bytes — soundfile decodes them downstream — so read the
-    metadata table and pull each file straight off the Hub instead.
-    """
-    import csv
-    import io as _io
-
-    from huggingface_hub import HfApi, HfFileSystem
-
-    api = HfApi(token=token)
-    fs = HfFileSystem(token=token)
-    files = api.list_repo_files(src.repo_id, repo_type="dataset")
-    audio_files = [f for f in files if f.lower().endswith(AUDIO_EXT)]
-    meta_name = next((f for f in files
-                      if f.rsplit("/", 1)[-1] in ("metadata.csv", "metadata.jsonl")), None)
-    if not meta_name:
-        raise RuntimeError(
-            f"{src.repo_id}: loose audio files but no metadata.csv/jsonl — cannot "
-            f"recover transcripts. Convert the repo to parquet, or add a metadata table."
-        )
-
-    with fs.open(f"datasets/{src.repo_id}/{meta_name}") as fh:
-        blob = fh.read().decode("utf-8", "replace")
-
-    if meta_name.endswith(".jsonl"):
-        recs = [json.loads(l) for l in blob.splitlines() if l.strip()]
-        fields = list(recs[0]) if recs else []
-    else:
-        rdr = csv.DictReader(_io.StringIO(blob))
-        recs, fields = list(rdr), list(rdr.fieldnames or [])
-
-    file_key = next((c for c in fields
-                     if c.lower() in ("file_name", "filename", "path", "audio", "file")), None)
-    if not file_key:
-        raise RuntimeError(f"{src.repo_id}: {meta_name} has no file-name column ({fields})")
-    text_key = _pick(src.text_column, fields, TEXT_CANDIDATES, "text")
-    spk_key = _pick(src.speaker_column, fields, SPEAKER_CANDIDATES, "speaker", required=False)
-    console.print(f"  audiofolder -> file={file_key!r} text={text_key!r} "
-                  f"speaker={spk_key!r}  ({len(recs)} rows, {len(audio_files)} files)")
-
-    # metadata paths are relative to the file's directory; index by basename so
-    # "data/x.wav" and "x.wav" both resolve.
-    by_base = {f.rsplit("/", 1)[-1]: f for f in audio_files}
-    for i, rec in enumerate(recs):
-        if limit and i >= limit:
-            return
-        name = str(rec.get(file_key, "")).rsplit("/", 1)[-1]
-        path = by_base.get(name)
-        if not path:
-            continue
-        try:
-            with fs.open(f"datasets/{src.repo_id}/{path}") as fh:
-                raw = fh.read()
-        except Exception:  # noqa: BLE001 - one unreadable clip must not kill the run
-            continue
-        yield {
-            "index": i,
-            "audio": {"bytes": raw, "path": path},
-            "raw_text": rec.get(text_key),
-            "speaker": str(rec[spk_key]) if spk_key and rec.get(spk_key) is not None else None,
-        }
-
-
-def _iter_source(src: Source, token: str | None, limit: int | None) -> Iterator[dict[str, Any]]:
-    from datasets import Audio, load_dataset
-
-    kind = "synthetic" if src.synthetic else "real"
-    console.print(f"[bold]Loading[/bold] {src.repo_id} (split={src.split}, {kind})")
-
-    if _is_audiofolder(src.repo_id, token):
-        yield from _iter_audiofolder(src, token, limit)
-        return
-
-    # A bounded run must also bound the download. Non-streaming load_dataset
-    # fetches the entire repo before .select() ever runs, so `--limit 20` would
-    # still pull gigabytes — which is exactly what a smoke test must not do.
-    streaming = limit is not None
-    try:
-        ds = load_dataset(src.repo_id, src.config, split=src.split, token=token,
-                          streaming=streaming)
-    except Exception as e:  # noqa: BLE001 - re-raised with a usable explanation
-        raise _explain_hub_error(src.repo_id, e, token) from e
-
-    if streaming:
-        columns = list(ds.features) if ds.features else list(next(iter(ds)).keys())
-        n_rows = "streaming"
-    else:
-        columns = list(ds.column_names)
-        n_rows = f"{len(ds)} rows"
-
-    audio_col = _pick(src.audio_column, columns, AUDIO_CANDIDATES, "audio")
-    text_col = _pick(src.text_column, columns, TEXT_CANDIDATES, "text")
-    speaker_col = _pick(src.speaker_column, columns, SPEAKER_CANDIDATES, "speaker",
-                        required=False)
-    console.print(f"  columns -> audio={audio_col!r} text={text_col!r} "
-                  f"speaker={speaker_col!r}  ({n_rows})")
-
-    ds = ds.cast_column(audio_col, Audio(decode=False))
-    if limit:
-        ds = ds.take(limit)
-
-    for i, row in enumerate(ds):
-        yield {
-            "index": i,
-            "audio": row[audio_col],
-            "raw_text": row[text_col],
-            "speaker": str(row[speaker_col]) if speaker_col else None,
-        }
+    """ASR resamples to 16 kHz; TTS calls `to_mono` with 24000 instead."""
+    return to_mono(array, sr, SAMPLE_RATE)
 
 
 def prepare(cfg: DataConfig, base_model: str, token: str | None = None,

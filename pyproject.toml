@@ -36,12 +36,38 @@ gpu = [
     "lhotse>=1.24",
 ]
 dev = ["pytest>=8.0"]
+# TTS. Installs on macOS arm64 — deliberately no librosa (numba) and no NeMo.
+tts = [
+    "torch>=2.2",
+    "soundfile>=0.12",
+    "soxr>=0.3",
+    "scipy>=1.11",
+    "pyloudnorm>=0.1",
+    "pyarrow>=14",
+]
+# GPU/Linux only, inside the training container.
+tts-gpu = [
+    "kokoro>=0.9",
+    "torchaudio",
+    "accelerate>=0.30",
+    "transformers>=4.40",
+    "einops",
+    "einops-exts",
+    "munch",
+    "matplotlib",
+    "nltk",
+]
+tts-eval = ["resemblyzer", "jiwer>=3.0"]
 
 [project.scripts]
 kreyol-asr = "kreyol_asr.cli:app"
+kreyol-tts = "kreyol_tts.cli:app"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/kreyol_asr"]
+packages = ["src/kreyol_asr", "src/kreyol_tts", "src/kreyol_common"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "slow: downloads model weights from the Hub; skip with -m 'not slow'",
+]
