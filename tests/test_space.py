@@ -64,8 +64,8 @@ def test_reset_button_restores_the_worker_defaults():
 
 def test_space_char_limit_matches_the_worker_default():
     handler = (ROOT / "serverless-tts" / "handler.py").read_text()
-    assert "MAX_CHARS = 120" in APP
-    assert '"MAX_CHARS", "120"' in handler
+    assert "MAX_CHARS = 200" in APP
+    assert '"MAX_CHARS", "200"' in handler
 
 
 def test_all_eight_voices_are_offered():

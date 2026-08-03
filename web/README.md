@@ -42,7 +42,7 @@ short and the browser owns the waiting.
 
 ## Long text
 
-The TTS worker takes 120 characters per request. `lib/segment.ts` splits longer
+The TTS worker takes 200 characters per request. `lib/segment.ts` splits longer
 text at sentence boundaries, packs consecutive short sentences back together (a
 segment is a separate GPU round trip, so naive per-sentence splitting multiplies
 the cost), and falls back to clause punctuation then word wrapping for a single

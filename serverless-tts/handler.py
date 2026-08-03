@@ -24,7 +24,10 @@ import soundfile as sf
 import torch
 
 MODEL_REPO = os.environ.get("MODEL_REPO", "jsbeaudry/haitian-kani-ht-v3")
-MAX_CHARS = int(os.environ.get("MAX_CHARS", "120"))
+# 200, not higher: the model silently truncates past ~250 characters (audio
+# length plateaus near 16 s and the tail of the text is simply never spoken)
+# and fails outright at 600 with "Special speech tokens not exist!".
+MAX_CHARS = int(os.environ.get("MAX_CHARS", "200"))
 
 # The only per-call generation knobs KaniTTS.__call__ takes; max_new_tokens is
 # fixed at model construction, so it cannot be set per request.

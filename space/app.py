@@ -44,7 +44,9 @@ LATENCIES = {
 }
 
 VOICES = ["nana", "deniz", "mako", "mariz", "klodin", "jan", "job", "leo"]
-MAX_CHARS = 120        # the worker's per-request limit, mirrored here
+# 200, not higher: the model silently truncates past ~250 characters and fails
+# outright at 600, so a larger segment would quietly drop the end of the text.
+MAX_CHARS = 200        # the worker's per-request limit, mirrored here
 MAX_TOTAL_CHARS = 2000  # guard on one submission: every segment is a billed call
 SEGMENT_GAP_S = 0.15    # silence joined between segments, so sentences breathe
 

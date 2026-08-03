@@ -39,7 +39,7 @@ which has no Creole slot, scores 98.2% on the same clips.
 
 [`jsbeaudry/haitian-kani-ht-v3`](https://huggingface.co/jsbeaudry/haitian-kani-ht-v3)
 — a KaniTTS voice model for Kreyol with eight speakers: `nana`, `deniz`, `mako`,
-`mariz`, `klodin`, `jan`, `job`, `leo`. Output is 22050 Hz mono, up to 120
+`mariz`, `klodin`, `jan`, `job`, `leo`. Output is 22050 Hz mono, up to 200
 characters per request.
 
 Sampling is adjustable under **Generation settings**:

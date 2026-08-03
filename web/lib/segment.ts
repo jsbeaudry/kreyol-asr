@@ -1,13 +1,16 @@
 /**
  * Split text into pieces that each fit one TTS request.
  *
- * The worker takes 120 characters per call, so anything longer is cut here,
+ * The worker takes MAX_CHARS per call, so anything longer is cut here,
  * synthesised one segment at a time and joined back into a single clip.
  *
  * Port of the splitter in space/app.py — keep the two in step.
  */
 
-export const MAX_CHARS = 120; // the worker's per-request limit
+// 200, not higher: the model silently truncates past ~250 characters — audio
+// length plateaus near 16 s and the tail is never spoken — and fails outright
+// at 600. Measured by round-tripping generated audio back through ASR.
+export const MAX_CHARS = 200;
 export const MAX_TOTAL_CHARS = 5000; // guard on one submission
 
 const SENTENCE_END = /(?<=[.!?…])\s+/;

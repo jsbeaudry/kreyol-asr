@@ -82,7 +82,7 @@ export default function DocsPage() {
         <section className="mt-10">
           <h2 className="text-2xl font-semibold tracking-tight">Text to speech</h2>
           <p className="mt-3 text-muted">
-            One request is one segment, capped at 120 characters — the worker&apos;s
+            One request is one segment, capped at 200 characters — the worker&apos;s
             own limit. Longer text is split at sentence boundaries client-side and
             the audio is joined back together.
           </p>

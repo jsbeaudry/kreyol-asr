@@ -219,8 +219,10 @@ def test_tts_exposes_only_the_real_generation_knobs():
 
 
 @pytest.mark.skipif(not TTS.exists(), reason="serverless-tts/ not present")
-def test_tts_default_char_limit_is_120():
-    assert '"MAX_CHARS", "120"' in TTS_HANDLER
+def test_tts_default_char_limit_is_200():
+    """Not higher: past ~250 characters the model silently truncates — the audio
+    stops but the request still succeeds — and at 600 it raises outright."""
+    assert '"MAX_CHARS", "200"' in TTS_HANDLER
 
 
 @pytest.mark.skipif(not TTS.exists(), reason="serverless-tts/ not present")
