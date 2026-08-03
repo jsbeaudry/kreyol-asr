@@ -23,10 +23,17 @@ sources:
     split: train
   - repo_id: jsbeaudry/media-social-2 # 2306
     split: train
-  - repo_id: jsbeaudry/franc-haitian # 2282
-    split: train
-  - repo_id: jsbeaudry/franc-haitian-female # 1570
-    split: train
+  # Temporarily out: both ship loose audio files rather than parquet, so
+  # `_iter_audiofolder` fetches them one HTTP request per clip — measured at
+  # 1.25 clips/sec on the pod, against 2306 parquet rows in 83 s. Together they
+  # add ~50 min to every prepare run for ~3852 clips (~4 h, ~9% of the corpus).
+  # These are REAL recordings and were eligible for val/test, so this is a real
+  # loss, not just a speed win. Restore them once `_iter_audiofolder` fetches a
+  # repo snapshot in one go instead of per-file.
+  # - repo_id: jsbeaudry/franc-haitian # 2282
+  #   split: train
+  # - repo_id: jsbeaudry/franc-haitian-female # 1570
+  #   split: train
   - repo_id: jsbeaudry/learn-the-numbers # 1225
     split: train
   - repo_id: jsbeaudry/justice-in-creole # 922
