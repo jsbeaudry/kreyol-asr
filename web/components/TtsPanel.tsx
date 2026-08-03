@@ -10,6 +10,7 @@ import {
   wavBlobUrl,
 } from "@/lib/audio";
 import { JobError, runJob } from "@/lib/client";
+import { PARAGRAPH_SAMPLES, TOPIC_SAMPLES, type Sample } from "@/lib/samples";
 import { MAX_CHARS, MAX_TOTAL_CHARS, splitForTts } from "@/lib/segment";
 import type { Track } from "./PlayerBar";
 import { ChevronDown, SpinnerIcon } from "./Icons";
@@ -57,6 +58,42 @@ type TtsOutput = {
   truncated?: boolean;
   note?: string;
 };
+
+function SampleChips({
+  title,
+  samples,
+  disabled,
+  onPick,
+}: {
+  title: string;
+  samples: Sample[];
+  disabled: boolean;
+  onPick: (s: Sample) => void;
+}) {
+  return (
+    <div>
+      <p className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-muted">
+        {title}
+      </p>
+      <div className="flex flex-wrap gap-1.5">
+        {samples.map((s) => (
+          <button
+            key={s.label}
+            type="button"
+            disabled={disabled}
+            onClick={() => onPick(s)}
+            // The character count is the useful part: it tells you whether this
+            // sample will be one generation or several.
+            title={`${s.text.length} characters`}
+            className="rounded-lg border border-line px-2.5 py-1 text-xs font-medium text-muted transition hover:border-brand-300 hover:bg-brand-50 hover:text-brand-800 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
 
 export function TtsPanel({ onTrack }: { onTrack: (t: Track) => void }) {
   const [text, setText] = useState(
@@ -210,6 +247,29 @@ export function TtsPanel({ onTrack }: { onTrack: (t: Track) => void }) {
             {text.length.toLocaleString()} / {MAX_TOTAL_CHARS.toLocaleString()} characters
           </span>
         </div>
+      </div>
+
+      <div className="space-y-3 border-t border-line px-5 py-4">
+        <SampleChips
+          title="Try a topic"
+          samples={TOPIC_SAMPLES}
+          disabled={busy}
+          onPick={(s) => {
+            setText(s.text);
+            setError("");
+            setResult("");
+          }}
+        />
+        <SampleChips
+          title="Longer paragraphs"
+          samples={PARAGRAPH_SAMPLES}
+          disabled={busy}
+          onPick={(s) => {
+            setText(s.text);
+            setError("");
+            setResult("");
+          }}
+        />
       </div>
 
       <div className="border-t border-line px-5 py-3">

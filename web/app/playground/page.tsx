@@ -37,7 +37,8 @@ export default function TextToSpeechPage() {
 
           <p className="mt-4 text-center text-xs text-muted">
             The first request after an idle period takes ~1–2 minutes while a GPU
-            worker starts. After that it is a couple of seconds per segment.
+            worker starts, and longer still right after a new model deploy. After
+            that it is a couple of seconds per segment.
           </p>
         </div>
       </div>

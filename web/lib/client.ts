@@ -6,7 +6,15 @@
  */
 
 export const POLL_MS = 1500;
-export const MAX_WAIT_MS = 240_000; // a cold worker pulls >10 GB first
+
+/**
+ * A warm worker answers in seconds and a recently-used image starts in about a
+ * minute, but the first request after a new image is deployed has to pull >10 GB
+ * onto a fresh host — measured past 200 s and still queued. 240 s was not
+ * enough, and timing out on someone's first ever request is the worst possible
+ * introduction to the product.
+ */
+export const MAX_WAIT_MS = 420_000;
 
 export type Progress = { state: string; waitedMs: number; note: string };
 
