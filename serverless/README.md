@@ -42,8 +42,8 @@ curl -X POST https://api.runpod.ai/v2/<endpoint-id>/runsync \
   -d '{"input": {"audio_base64": "'"$(base64 -i clip.wav)"'", "latency_ms": 320}}'
 ```
 
-`latency_ms` is one of 80 / 320 / 560 / 1120 — measured WER 17.3 / 15.7 / 14.9 /
-14.7%. Left context is fixed at 56 and is not a parameter: it matches the
+`latency_ms` is one of 80 / 320 / 560 / 1120 — measured WER 11.9 / 10.1 / 10.3 / 10.1%
+(v2; 332-clip speaker-disjoint test set, exact scoring). Left context is fixed at 56 and is not a parameter: it matches the
 encoder's `sliding_window: 57`, and changing it degrades streaming behaviour.
 
 ## Response

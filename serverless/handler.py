@@ -31,8 +31,11 @@ from nemo.collections.asr.models import ASRModel
 
 SAMPLE_RATE = 16000
 LANG = os.environ.get("TARGET_LANG", "ht-HT")
-MODEL_REPO = os.environ.get("MODEL_REPO", "jsbeaudry/nemotron-3.5-asr-streaming-0.6b-ht")
-MODEL_FILE = os.environ.get("MODEL_FILE", "nemotron-3.5-asr-streaming-0.6b-ht.nemo")
+# v2 is PRIVATE, unlike v1 — HF_TOKEN must be present at image build (the Dockerfile
+# pre-downloads the checkpoint) and is safest to keep at runtime too, since
+# hf_hub_download still revalidates the revision against the Hub.
+MODEL_REPO = os.environ.get("MODEL_REPO", "jsbeaudry/nemotron-3.5-asr-streaming-0.6b-ht-v2")
+MODEL_FILE = os.environ.get("MODEL_FILE", "nemotron-3.5-asr-streaming-0.6b-ht-v2.nemo")
 
 # Right context -> latency. Left context is ALWAYS 56: it matches the encoder's
 # sliding_window of 57. Any other value degrades the streaming behaviour the

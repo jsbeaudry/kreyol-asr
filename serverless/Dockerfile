@@ -25,8 +25,8 @@ RUN pip install --no-cache-dir Cython packaging && \
 
 # Bake the checkpoint into the image. A cold worker otherwise spends 30-60 s
 # pulling 2.5 GB from the Hub before it can serve its first request.
-ARG MODEL_REPO=jsbeaudry/nemotron-3.5-asr-streaming-0.6b-ht
-ARG MODEL_FILE=nemotron-3.5-asr-streaming-0.6b-ht.nemo
+ARG MODEL_REPO=jsbeaudry/nemotron-3.5-asr-streaming-0.6b-ht-v2
+ARG MODEL_FILE=nemotron-3.5-asr-streaming-0.6b-ht-v2.nemo
 ARG HF_TOKEN=
 ENV MODEL_REPO=${MODEL_REPO} MODEL_FILE=${MODEL_FILE}
 RUN python -c "\
