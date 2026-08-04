@@ -9,7 +9,7 @@ export const dynamic = "force-dynamic";
 const LIMIT = 20;
 const WINDOW_MS = 60_000;
 
-// Right context -> latency, with WER from a 385-clip speaker-disjoint test set.
+// Right context -> latency, with WER from a 332-clip speaker-disjoint test set.
 const LATENCIES = new Set([80, 320, 560, 1120]);
 
 // Base64 inflates by ~4/3, and RunPod caps a payload at 20 MB. Refuse early

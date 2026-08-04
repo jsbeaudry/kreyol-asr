@@ -239,7 +239,7 @@ safetensors requires NVIDIA's `.nemo`→HF converter. Use NeMo as shown above.
 
 - **Creole only** — see the warning above.
 - **Word segmentation dominates the remaining errors.** CER is roughly a third of WER
-  (≈4.8% vs ≈15.7% at 320 ms), which is the signature of boundary errors rather than
+  (≈2.8% vs ≈10.1% at 320 ms), which is the signature of boundary errors rather than
   acoustic ones: `Si l`→`Sil`, `ou mèt`→`Omèt`, `bò dlo`→`bòd lo`. Proper nouns and
   numbers are the other common failures (`Dariyis`→`Dariyich`, `120`→`12`). A decode-time
   phrase-boosting list or an n-gram LM would target this directly.

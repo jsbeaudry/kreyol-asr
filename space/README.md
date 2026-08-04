@@ -23,17 +23,17 @@ They are separate endpoints because they cannot share a Python environment —
 
 Thin client over a RunPod Serverless endpoint running
 [`jsbeaudry/nemotron-3.5-asr-streaming-0.6b-ht`](https://huggingface.co/jsbeaudry/nemotron-3.5-asr-streaming-0.6b-ht)
-— a 0.6B cache-aware streaming FastConformer RNN-T fine-tuned on 45.9 h of Kreyol.
+— a 0.6B cache-aware streaming FastConformer RNN-T fine-tuned on 58.8 h of Kreyol.
 
-**15.7% WER** at 320 ms on a 385-clip speaker-disjoint test set. The base model,
-which has no Creole slot, scores 98.2% on the same clips.
+**10.1% WER** at 320 ms on a 332-clip speaker-disjoint test set. The base model,
+which has no Creole slot, scores 98.6% on the same clips.
 
 | latency | att_context_size | WER |
 |---|---|---:|
-| 80 ms | `[56, 0]` | 17.3% |
-| 320 ms | `[56, 3]` | 15.7% |
-| 560 ms | `[56, 6]` | 14.9% |
-| 1120 ms | `[56, 13]` | 14.7% |
+| 80 ms | `[56, 0]` | 11.9% |
+| 320 ms | `[56, 3]` | 10.1% |
+| 560 ms | `[56, 6]` | 10.3% |
+| 1120 ms | `[56, 13]` | 10.1% |
 
 ## Text to speech
 

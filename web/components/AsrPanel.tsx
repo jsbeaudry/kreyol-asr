@@ -6,12 +6,12 @@ import { toAsrBase64 } from "@/lib/audio";
 import { runJob } from "@/lib/client";
 import { ChevronDown, MicIcon, SpinnerIcon, UploadIcon } from "./Icons";
 
-// Right context -> latency, with WER from a 385-clip speaker-disjoint test set.
+// Right context -> latency, with WER from a 332-clip speaker-disjoint test set.
 const LATENCIES = [
-  { ms: 80, label: "80 ms — 17.3% WER" },
-  { ms: 320, label: "320 ms — 15.7% WER" },
-  { ms: 560, label: "560 ms — 14.9% WER" },
-  { ms: 1120, label: "1120 ms — 14.7% WER" },
+  { ms: 80, label: "80 ms — 11.9% WER" },
+  { ms: 320, label: "320 ms — 10.1% WER" },
+  { ms: 560, label: "560 ms — 10.3% WER" },
+  { ms: 1120, label: "1120 ms — 10.1% WER" },
 ] as const;
 
 type AsrOutput = {

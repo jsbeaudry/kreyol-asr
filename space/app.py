@@ -34,13 +34,13 @@ TTS_ENDPOINT = os.environ.get("RUNPOD_TTS_ENDPOINT", "90fnsmvwgqfl6y")
 ASR_BASE = f"https://api.runpod.ai/v2/{ASR_ENDPOINT}"
 TTS_BASE = f"https://api.runpod.ai/v2/{TTS_ENDPOINT}"
 
-# Right context -> latency, with the WER measured on a 385-clip speaker-disjoint
+# Right context -> latency, with the WER measured on a 332-clip speaker-disjoint
 # test set. Left context is fixed at 56 by the worker and is not selectable.
 LATENCIES = {
-    "80 ms — 17.3% WER": 80,
-    "320 ms — 15.7% WER": 320,
-    "560 ms — 14.9% WER": 560,
-    "1120 ms — 14.7% WER": 1120,
+    "80 ms — 11.9% WER": 80,
+    "320 ms — 10.1% WER": 320,
+    "560 ms — 10.3% WER": 560,
+    "1120 ms — 10.1% WER": 1120,
 }
 
 VOICES = ["nana", "deniz", "mako", "mariz", "klodin", "jan", "job", "leo"]
@@ -337,14 +337,14 @@ with gr.Blocks(title="Haitian Creole speech") as demo:
             gr.Markdown(
                 "[`jsbeaudry/nemotron-3.5-asr-streaming-0.6b-ht`]"
                 "(https://huggingface.co/jsbeaudry/nemotron-3.5-asr-streaming-0.6b-ht)"
-                " — a 0.6B streaming FastConformer RNN-T fine-tuned on 45.9 h of "
-                "Kreyòl. **15.7% WER** at 320 ms on a 385-clip speaker-disjoint "
-                "test set; the base model, which has no Creole slot, scores 98.2%."
+                " — a 0.6B streaming FastConformer RNN-T fine-tuned on 58.8 h of "
+                "Kreyòl. **10.1% WER** at 320 ms on a 332-clip speaker-disjoint "
+                "test set; the base model, which has no Creole slot, scores 98.6%."
             )
             with gr.Row():
                 audio_in = gr.Audio(sources=["microphone", "upload"], type="numpy",
                                     label="Creole audio")
-                latency = gr.Dropdown(list(LATENCIES), value="320 ms — 15.7% WER",
+                latency = gr.Dropdown(list(LATENCIES), value="320 ms — 10.1% WER",
                                       label="Streaming latency",
                                       info="Less lookahead is faster but less accurate.")
             asr_go = gr.Button("Transcribe", variant="primary")

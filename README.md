@@ -154,7 +154,7 @@ Design points worth knowing:
 - **Only `gate` writes `metadata.jsonl`.** `ingest` writes `metadata.all.jsonl`, which
   `_iter_localdir` refuses — pseudo-labels cannot reach training ungated.
 - **`pseudo_labeled: true` keeps it out of val/test.** Scoring against another model's
-  transcripts measures agreement with that model, not accuracy. The 385-clip
+  transcripts measures agreement with that model, not accuracy. The 332-clip
   human-labelled test set stays the headline metric, untouched.
 - **The agreement CER ignores orthography.** The corpus writes clitics space-separated
   (`n ap`), this repo writes `n'ap`. Stripping punctuation turns `n'ap` into `nap`,

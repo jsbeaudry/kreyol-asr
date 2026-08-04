@@ -13,16 +13,16 @@ const FEATURES = [
   {
     title: "Streaming transcription",
     body:
-      "A 0.6B FastConformer RNN-T fine-tuned on 45.9 h of Haitian Creole. " +
-      "15.7% WER at 320 ms, and you pick the latency that suits your product.",
+      "A 0.6B FastConformer RNN-T fine-tuned on 58.8 h of Haitian Creole. " +
+      "10.1% WER at 320 ms, and you pick the latency that suits your product.",
     icon: <MicIcon className="h-5 w-5" />,
   },
 ];
 
 const NUMBERS = [
-  { value: "15.7%", label: "WER at 320 ms", note: "385-clip speaker-disjoint test set" },
-  { value: "98.2%", label: "WER of the base model", note: "same clips, no Creole slot" },
-  { value: "45.9 h", label: "of Kreyòl in training", note: "curated and hand-checked" },
+  { value: "10.1%", label: "WER at 320 ms", note: "332-clip speaker-disjoint test set" },
+  { value: "98.6%", label: "WER of the base model", note: "same clips, no Creole slot" },
+  { value: "58.8 h", label: "of Kreyòl in training", note: "41 h human-transcribed, 18 h machine-transcribed archival radio" },
 ];
 
 export default function Home() {
@@ -63,8 +63,8 @@ export default function Home() {
           <p className="mx-auto mt-5 max-w-2xl text-lg leading-relaxed text-muted">
             Text to speech and speech to text for Haitian Creole. Both models were
             fine-tuned on Creole audio rather than bolted onto a multilingual
-            checkpoint — which is why the base model scores 98.2% WER on our test
-            clips and ours scores 15.7%.
+            checkpoint — which is why the base model scores 98.6% WER on our test
+            clips and ours scores 10.1%.
           </p>
           <div className="mt-9 flex flex-wrap justify-center gap-3">
             <Link

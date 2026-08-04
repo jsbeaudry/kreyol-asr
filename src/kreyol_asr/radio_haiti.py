@@ -916,7 +916,7 @@ def render_inspect_report(s: dict[str, Any]) -> str:
             "",
             "> A rolloff clustered near 4 kHz means the material is 8 kHz-sourced and merely "
             "stored at 16 kHz. That is usable — narrowband robustness is part of why this "
-            "corpus is worth having — but if the existing 45.9 h is all wideband, the model "
+            "corpus is worth having — but if the rest of the corpus is all wideband, the model "
             "can learn 'narrowband implies archival register' instead of learning the speech. "
             "Bimodality in this histogram is the thing to look for.",
             "",

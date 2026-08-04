@@ -22,8 +22,8 @@ export default function SpeechToTextPage() {
           <div className="text-center">
             <h2 className="text-3xl font-bold tracking-tight">Transcribe Kreyòl</h2>
             <p className="mx-auto mt-2 max-w-md text-muted">
-              A streaming FastConformer RNN-T fine-tuned on 45.9 h of Haitian
-              Creole. <strong className="font-semibold text-ink">15.7% WER</strong>{" "}
+              A streaming FastConformer RNN-T fine-tuned on 58.8 h of Haitian
+              Creole. <strong className="font-semibold text-ink">10.1% WER</strong>{" "}
               at 320 ms on a speaker-disjoint test set.
             </p>
           </div>
