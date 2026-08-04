@@ -261,6 +261,9 @@ def review(agreement: Path, audiofolder: Path, out: Path, *, n: int = 180,
                 shutil.copy2(src, clips / Path(r["file_name"]).name)
 
     (out / "review.md").write_text(_render_review(sample, t1, t2))
+    # The CSV is for re-gating; this is for the ears. Reviewing means listening, and
+    # a page with inline players beats opening 151 wavs by hand.
+    (out / "index.html").write_text(_render_review_html(sample))
     console.print(f"[green]Wrote[/green] {out/'review.csv'} ({len(sample)} clips)")
     console.print("Fill the `verdict` column with: corpus | ours | both-ok | both-bad | unclear, "
                   "then pass it back via `radio gate --review`.")
@@ -500,3 +503,102 @@ def render_gate_report(s: dict[str, Any]) -> str:
         "",
     ]
     return "\n".join(lines) + "\n"
+
+
+_REVIEW_CSS = """
+body{font:15px/1.5 -apple-system,system-ui,sans-serif;margin:0;background:#f6f6f7;color:#111}
+header{position:sticky;top:0;background:#fff;border-bottom:1px solid #ddd;padding:12px 20px;z-index:9}
+h1{font-size:17px;margin:0 0 4px} .sub{color:#666;font-size:13px;max-width:820px}
+#bar{margin-top:8px;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+button{padding:6px 12px;border:1px solid #bbb;border-radius:6px;background:#fff;cursor:pointer}
+button:hover{background:#eee} #done{font-variant-numeric:tabular-nums;color:#666;font-size:13px}
+main{max-width:860px;margin:0 auto;padding:16px}
+.card{background:#fff;border:1px solid #e2e2e4;border-radius:10px;padding:14px;margin:12px 0}
+.card.answered{border-color:#8bc34a;background:#fcfffa}
+.meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+.n{font-weight:600;color:#888}
+.rec{color:#999;font-size:12px;margin-left:auto;font-family:ui-monospace,monospace}
+.pill{background:#eef;border-radius:20px;padding:2px 9px;font-size:12px;color:#446}
+audio{width:100%;height:34px;margin:4px 0 10px}
+.t{display:flex;gap:10px;margin:5px 0}
+.t b{flex:0 0 56px;color:#888;font-size:12px;text-transform:uppercase;padding-top:2px}
+.t span{flex:1}
+.v{display:flex;gap:14px;flex-wrap:wrap;margin-top:10px;padding-top:10px;
+   border-top:1px solid #f0f0f0;font-size:13px}
+.v label{cursor:pointer;user-select:none}
+"""
+
+_REVIEW_JS = """
+const K='rh-verdicts';
+let V=JSON.parse(localStorage.getItem(K)||'{}');
+function paint(){
+  document.querySelectorAll('.card').forEach(c=>{
+    const f=c.querySelector('.v').dataset.file;
+    if(V[f]){c.classList.add('answered');
+      const r=c.querySelector('input[value="'+V[f]+'"]'); if(r) r.checked=true;}
+  });
+  document.getElementById('done').textContent=
+    Object.keys(V).length+' / '+document.querySelectorAll('.card').length+' done';
+}
+document.addEventListener('change',e=>{
+  if(e.target.type!=='radio')return;
+  const c=e.target.closest('.card');
+  V[c.querySelector('.v').dataset.file]=e.target.value;
+  localStorage.setItem(K,JSON.stringify(V)); paint();
+});
+function dl(){
+  let out='file_name,verdict\\n';
+  for(const k of Object.keys(V)) out+=k+','+V[k]+'\\n';
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([out],{type:'text/csv'}));
+  a.download='verdicts.csv'; a.click();
+}
+paint();
+"""
+
+_VERDICTS = [("corpus", "corpus right"), ("ours", "ours right"), ("both-ok", "both ok"),
+             ("both-bad", "both bad"), ("unclear", "unclear")]
+
+
+def _render_review_html(sample: list[dict]) -> str:
+    """A listening page. Verdicts live in localStorage and export as the CSV `gate` reads.
+
+    Deliberately dependency-free and offline: it is served off the pod by
+    `python -m http.server`, so anything fetched from a CDN would simply not load.
+    """
+    import html as _h
+
+    ordered = sorted(sample, key=lambda r: (r["cer"], r["file_name"]))
+    cards = []
+    for i, r in enumerate(ordered):
+        name = _h.escape(r["file_name"].split("/")[-1])
+        ours = _h.escape(r["ours"]) or "<i>(our model returned nothing)</i>"
+        radios = "".join(
+            f'<label><input type="radio" name="v{i}" value="{v}">{lbl}</label>'
+            for v, lbl in _VERDICTS)
+        cards.append(
+            f'<div class="card"><div class="meta"><span class="n">#{i + 1}</span>'
+            f'<span class="pill">CER {r["cer"]:.3f}</span>'
+            f'<span class="pill">conf {r["confidence"]:.3f}</span>'
+            f'<span class="pill">{_h.escape(r.get("conf_tercile", ""))}</span>'
+            f'<span class="pill">{r["duration"]:.1f}s</span>'
+            f'<span class="rec">{_h.escape(r["recording_id"])[:8]} @ '
+            f'{r["start_ms"] / 1000:.0f}s</span></div>'
+            f'<audio controls preload="none" src="clips/{name}"></audio>'
+            f'<div class="t"><b>corpus</b><span>{_h.escape(r["text"])}</span></div>'
+            f'<div class="t"><b>ours</b><span>{ours}</span></div>'
+            f'<div class="v" data-file="{_h.escape(r["file_name"])}">{radios}</div></div>')
+
+    return (
+        "<!doctype html><meta charset=utf-8><title>Radio Haiti — label review</title>"
+        f"<style>{_REVIEW_CSS}</style>"
+        "<header><h1>Radio Haiti — label review</h1><div class=sub>"
+        "Listen, then say which transcript matches the audio. <b>corpus right</b> and "
+        "<b>both ok</b> count as usable labels; <b>ours right</b> and <b>both bad</b> are "
+        "label noise. The CER band where usable labels fall below ~60% is where "
+        "<code>--cer-band-high</code> belongs. Sorted by CER, lowest first. Saved in this "
+        "browser as you go.</div><div id=bar>"
+        "<button onclick=\"dl()\">Download verdicts CSV</button>"
+        "<button onclick=\"if(confirm('Clear all verdicts?')){localStorage.clear();"
+        "location.reload()}\">Reset</button><span id=done></span></div></header>"
+        f"<main>{''.join(cards)}</main><script>{_REVIEW_JS}</script>")
