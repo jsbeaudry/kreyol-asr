@@ -59,7 +59,12 @@ train:
   optimizer: adamw
   scheduler: CosineAnnealing
   val_check_interval: 750 # ~19 validation points across the run
-  save_top_k: 3
+  # 1, not 3. A .ckpt carries optimizer state, so each is ~7.7 GB for this 0.6B model;
+  # top-3 plus save_last is ~31 GB of checkpoints per run. That silently filled the
+  # 100 GB pod volume mid-write and killed a run at step 1750 with no error — the
+  # MooseFS mount reports the cluster's free space, not the quota, so `df` looked fine.
+  # The runners-up are never loaded: `bench` and `push` both take the newest .nemo.
+  save_top_k: 1
   exp_dir: exp
   # Extra `key=value` Hydra overrides appended verbatim to the NeMo command.
   # Use this for anything not modelled above rather than editing train.py.
