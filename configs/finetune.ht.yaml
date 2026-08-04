@@ -31,14 +31,13 @@ train:
   # would overfit hard. 10000 (~23 epochs) is a reasonable fine-tuning budget —
   # watch val WER and stop early if it turns up.
   #
-  # WHEN RADIO HAITI IS ENABLED, retune these three together. At batch_duration=250,
-  # steps/epoch = train_hours*3600/250, so 45.9 h -> 661 and 66 h -> 950. To hold
-  # ~15 epochs: max_steps 14000, warmup_steps 700 (the 5% rule below), and
-  # val_check_interval 750 (~19 validation points; leaving it at 500 buys no extra
-  # information and costs ~40% more validation wall clock). Left at the 45.9 h values
-  # deliberately — the accepted Radio Haiti hours are not known until `radio gate`
-  # runs, and retuning now would mis-size a run that does not include the data.
-  max_steps: 10000
+  # Retuned now that Radio Haiti is in: the train pool is 58.8 h (35.0 real +
+  # 7.8 synthetic + 17.78 pseudo-labeled), and the trainer reports ~1000 steps per
+  # epoch at batch_duration=250. 14000 steps is ~14 epochs, matching the budget the
+  # 45.9 h run had. warmup is the 5% rule below; val_check_interval 750 gives ~19
+  # validation points, where 500 would buy no extra information for ~40% more
+  # validation wall clock.
+  max_steps: 14000
   devices: 1
   precision: bf16
   # Seconds of audio per batch (Lhotse dynamic batching). 400 is the stock value
@@ -55,11 +54,11 @@ train:
   weight_decay: 1.0e-3
   # 5% of max_steps. The base recipe's 10000-step warmup assumes training from
   # scratch; warming up for the whole run would waste a fine-tune.
-  warmup_steps: 500
+  warmup_steps: 700
   min_lr: 1.0e-6
   optimizer: adamw
   scheduler: CosineAnnealing
-  val_check_interval: 500 # ~20 validation points across the run
+  val_check_interval: 750 # ~19 validation points across the run
   save_top_k: 3
   exp_dir: exp
   # Extra `key=value` Hydra overrides appended verbatim to the NeMo command.
